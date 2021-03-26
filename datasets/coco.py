@@ -1,13 +1,18 @@
 import os
 import random
 import torch.utils.data as data
-import torchvision.transforms as T
+import torchvision.transforms as transforms
 
 from PIL import Image
 
 
+IMAGE_TRANSFORM = transforms.Compose([
+    transforms.Resize((225, 225)),
+    transforms.ToTensor()
+])
+
 def get_loader(batch_size, root, ann_file="annotations/captions_train2014.json", 
-               transform=T.ToTensor(), prob_unaligned=0.9, num_workers=0):
+               transform=None, prob_unaligned=0.9, num_workers=0):
     dataset = CoCoText2Img(root=root, 
                            ann_file=ann_file, 
                            transform=transform,
@@ -78,7 +83,8 @@ if __name__ == "__main__":
     os.chdir(os.path.join("..", "..", "datasets", "coco"))
     train_loader = get_loader(batch_size=32,
                               root=os.path.join("images", "train2014"),
-                              ann_file=os.path.join("annotations", "captions_train2014.json"))
+                              ann_file=os.path.join("annotations", "captions_train2014.json"),
+                              transform=IMAGE_TRANSFORM)
     print(next(iter(train_loader)))
     
     
