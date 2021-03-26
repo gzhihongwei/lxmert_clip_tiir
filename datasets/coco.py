@@ -76,7 +76,7 @@ if __name__ == "__main__":
     train_loader = get_loader(batch_size=32,
                               root=os.path.join("images", "train2014"),
                               ann_file=os.path.join("annotations", "captions_train2014.json"))
-    print(train_loader[0])
+    print(next(iter(train_loader)))
     
     
   
