@@ -65,6 +65,9 @@ class CoCoText2Img(data.Dataset):
             aligned = 0
             image = self._load_unaligned_image(id)
             
+        if self.transform is not None:
+            image = self.transform(image)
+            
         return caption, image, aligned
     
     def __len__(self):
