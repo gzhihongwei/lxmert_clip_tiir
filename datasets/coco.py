@@ -72,7 +72,7 @@ class CoCoText2Img(data.Dataset):
         
         
 if __name__ == "__main__":
-    os.chdir(os.path.join("..", "datasets", "coco"))
+    os.chdir(os.path.join("..", "..", "datasets", "coco"))
     train_loader = get_loader(batch_size=32,
                               root=os.path.join("images", "train2014"),
                               ann_file=os.path.join("annotations", "captions_train2014.json"))
