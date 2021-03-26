@@ -50,7 +50,7 @@ class CoCoText2Img(data.Dataset):
     
     def _load_unaligned_image(self, true_image_id):
         candidate_image_ids = list({anns["image_id"] for anns in self.coco.anns.values() if anns["image_id"] != true_image_id})
-        unaligned_image_id = random.choise(candidate_image_ids)
+        unaligned_image_id = random.choice(candidate_image_ids)
         return self._load_image(unaligned_image_id)
         
     
