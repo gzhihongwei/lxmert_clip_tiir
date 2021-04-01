@@ -73,6 +73,9 @@ class CoCoText2Img(data.Dataset):
         if self.transform is not None:
             image = self.transform(image)
             
+        # Faster R-CNN expects BGR instead of RGB
+        image = image[..., ::-1]
+            
         return caption, image, aligned
     
     def __len__(self):
