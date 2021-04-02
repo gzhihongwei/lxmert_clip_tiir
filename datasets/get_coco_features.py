@@ -49,7 +49,7 @@ def featurize_coco(args):
 if __name__ == '__main__':
     args = argparse.ArgumentParser(description='Obtains Faster-RCNN pooled features and bounding boxes for COCO 2014 splits')
     args.add_argument('-c', '--chdir', type=str, 
-                      dest='change_dir', default=os.path.join("..", "..", "datasets", "coco")
+                      dest='change_dir', default=os.path.join("..", "..", "datasets", "coco"),
                       help='Path to change to before featurizing')
     args.add_argument('-s', '--split', type=str, 
                       dest='split', required=True,
