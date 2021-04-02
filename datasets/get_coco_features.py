@@ -47,18 +47,18 @@ def featurize_coco(args):
         
 
 if __name__ == '__main__':
-    args = argparse.ArgumentParser(description='Obtains Faster-RCNN pooled features and bounding boxes for COCO 2014 splits')
-    args.add_argument('-c', '--chdir', type=str, 
+    parser = argparse.ArgumentParser(description='Obtains Faster-RCNN pooled features and bounding boxes for COCO 2014 splits')
+    parser.add_argument('-c', '--chdir', type=str, 
                       dest='change_dir', default=os.path.join("..", "..", "datasets", "coco"),
                       help='Path to change to before featurizing')
-    args.add_argument('-s', '--split', type=str, 
+    parser.add_argument('-s', '--split', type=str, 
                       dest='split', required=True,
                       help='Which split to featurize the images of')
-    args.add_argument('-i', '--image_root', type=str,
+    parser.add_argument('-i', '--image_root', type=str,
                       dest='image_root', required=True,
                       help='Relative path from change_dir')
     
-    args.parse_args()
+    args = parser.parse_args()
     
     os.chdir(args.change_dir)
     featurize_coco(args)
