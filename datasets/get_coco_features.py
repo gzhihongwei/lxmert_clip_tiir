@@ -26,7 +26,7 @@ def featurize_coco(args):
     
     # Get image ids and filenames
     image_ids = coco.getImgIds()
-    image_filenames = [image[0]['filename'] for image in coco.loadImgs(image_ids)]
+    image_filenames = [image['filename'] for image in coco.loadImgs(image_ids)]
     
     # Create the place to store the features extracted from Faster-RCNN
     faster_dir = os.path.join('faster_features', args.split)
