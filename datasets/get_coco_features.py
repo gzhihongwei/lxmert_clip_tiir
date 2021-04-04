@@ -1,4 +1,6 @@
-import argparse
+""" Usage: srun -p 1080ti-short --gres=gpu:1 python3 get_coco_features.py --dataset vg --net res101 --cfg ../../deep_tbir/models/faster_rcnn/cfgs/res101.yml --classes_dir ../../deep_tbir/models/faster_rcnn/data/genome/1600-400-20 --load_dir ../../deep_tbir/models/faster_rcnn/models --cuda
+"""
+
 import os
 import numpy as np
 
@@ -46,20 +48,7 @@ def featurize_coco(split, img_root):
     print('Done obtaining all Faster-RCNN detections')
         
 
-if __name__ == '__main__':
-    # parser = argparse.ArgumentParser(description='Obtains Faster-RCNN pooled features and bounding boxes for COCO 2014 splits')
-    # parser.add_argument('-c', '--chdir', type=str, 
-    #                   dest='change_dir', default=os.path.join("..", "..", "datasets", "coco"),
-    #                   help='Path to change to before featurizing')
-    # parser.add_argument('-s', '--split', type=str, 
-    #                   dest='split', required=True,
-    #                   help='Which split to featurize the images of')
-    # parser.add_argument('-i', '--image_root', type=str,
-    #                   dest='image_root', required=True,
-    #                   help='Relative path from change_dir')
-    
-    # args = parser.parse_args()
-    
+if __name__ == '__main__':    
     os.chdir(os.path.join("..", "..", "datasets", "coco"))
     split = 'train2014'
     img_root = os.path.join("images", split)
