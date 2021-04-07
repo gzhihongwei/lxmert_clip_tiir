@@ -1,16 +1,29 @@
-import cv2
+import numpy as np
 import os
 import random
 import torch.utils.data as data
-import torchvision.transforms as transforms
 
 
-def get_loader(batch_size, root, ann_file="annotations/captions_train2014.json", 
+def get_loader(batch_size, feature_root, ann_file="annotations/captions_train2014.json", 
                prob_unaligned=0.9, num_workers=0):
-    dataset = CoCoText2Img(root=root, 
+    """
+    Returns the pytorch dataset for either the training or validation split of COCO 2014 captions
+    
+    :param batch_size: batch size of dataloader
+    :param feature_root: directory where all of the saved Faster RCNN features are located
+    :param ann_file: annotation file for the data to be loaded
+    :param prob_unaligned: probability that the Faster RCNN feature is not from the image
+                           paired with the caption
+    :param num_workers: number of other sub processes loading the data
+    :return: torch.utils.data.DataLoader for the COCO dataset
+    """
+    
+    # Gets the pytorch dataset
+    dataset = CoCoText2Img(feature_root=feature_root, 
                            ann_file=ann_file, 
                            prob_unaligned=prob_unaligned)
     
+    # Gets the corresponding pytorch dataloader
     data_loader = data.DataLoader(dataset=dataset,
                                   batch_size=batch_size,
                                   shuffle=True,
@@ -21,13 +34,22 @@ def get_loader(batch_size, root, ann_file="annotations/captions_train2014.json",
 
 
 class CoCoText2Img(data.Dataset):
-    def __init__(self, root, ann_file, transform, prob_unaligned):
+    """
+    Pytorch dataset that handles COCO train2014 and val2014 splits
+    """
+    def __init__(self, feature_root, ann_file, prob_unaligned):
+        """
+        Constructor for CoCoText2Img
+        
+        :param feature_root: directory where all of the saved Faster RCNN features are located
+        :param ann_file: annotation file for the data to be loaded
+        :param prob_unaligned: probability that the Faster RCNN feature is not from the image
+                               paired with the caption
+        """
         from pycocotools.coco import COCO
         
-        # Store the transform
-        self.transform = transform
-        # Store the image root
-        self.root = root
+        # Store the feature root
+        self.feature_root = feature_root
         # Create a COCO instance
         self.coco = COCO(ann_file)
         # All of the caption ids
@@ -37,35 +59,103 @@ class CoCoText2Img(data.Dataset):
         self.prob_unaligned = prob_unaligned
         
     def _get_caption_image_id(self, ann_id):
+        """
+        Gets the image_id of the image paired with caption of ann_id
+        
+        :param ann_id: caption id in COCO
+        :return: int the image_id of the associated image to the caption
+        """
         return self.coco.loadAnns(ann_id)[0]["image_id"]
     
     def _load_caption(self, ann_id):
+        """
+        Gets the caption with ann_id
+        
+        :param ann_id: caption id in COCO
+        :return: str the caption
+        """
         return self.coco.loadAnns(ann_id)[0]["caption"]
     
-    def _load_image_path(self, image_id):
-        path = self.coco.loadImgs(image_id)[0]["file_name"]
-        return os.path.join(self.root, path)
+    def _load_image_features(self, image_id):
+        """
+        Loads the bounding boxes and features extracted from Faster RCNN for LXMERT
+        
+        :param image_id: image id in COCO
+        :return: Tuple[np.ndarray, np.ndarray] normalized bounding boxes and ROI pooled features
+        """
+        def _reform_faster_features(saved):
+            """
+            Unpacks data from loaded .npz file and prepares it for LXMERT format
+            
+            :param saved: loaded .npz file
+            :return: Tuple[np.ndarray, np.ndarray] normalized bounding boxes and ROI pooled features
+            """
+            
+            # Unpack loaded numpy object
+            height = saved['image_h']
+            width = saved['image_w']
+            boxes = saved['boxes']
+            features = saved['features']
+            
+            # Calculate the components
+            x = (boxes[:, 0:1] + boxes[:, 2:3]) / 2
+            y = (boxes[:, 1:2] + boxes[:, 3:4]) / 2
+            w = (boxes[:, 2:3] - boxes[:, 0:1])
+            h = (boxes[:, 3:4] - boxes[:, 1:2])
+            
+            # Normalize and concatenate
+            reformed_boxes = np.concatenate((x/width, y/height, w/width, h/height), axis=1)
+            
+            return reformed_boxes, features
+            
+        # Load cached features
+        faster_features = np.load(os.path.join(self.feature_root, f'{image_id}.npz'))
+        return _reform_faster_features(faster_features)
     
-    def _load_unaligned_image_path(self, true_image_id):
+    def _load_unaligned_features(self, true_image_id):
+        """
+        Randomly loads a different image's features than that of true_image_id
+        
+        :param true_image_id: image id in COCO to avoid loading of
+        :return: Tuple[np.ndarray, np.ndarray] Faster RCNN features of image that is not true_image_id
+        """
+        
+        # All of the possible image_ids to sample
         candidate_image_ids = list({anns["image_id"] for anns in self.coco.anns.values() if anns["image_id"] != true_image_id})
+        # Sample an image_id
         unaligned_image_id = random.choice(candidate_image_ids)
-        return self._load_image_path(unaligned_image_id)
+        return self._load_image_features(unaligned_image_id)
         
     
     def __getitem__(self, index):
+        """
+        Gets the caption, Faster RCNN features, and whether the caption and image are aligned for index
+        
+        :param index: index in the list of caption_ids
+        :return: Tuple[str, ]
+        """
+        
+        # Get the caption id at index of the list of caption ids
         id = self.ids[index]
+        # Load corresponding COCO data
         caption = self._load_caption(id)
         image_id = self._get_caption_image_id(id)
-        image = self._load_image_path(image_id)
+        boxes, features = self._load_image_features(image_id)
         aligned = 1
         
+        # Randomly unalign pairing with probability of prob_unaligned
         if random.random() < self.prob_unaligned:
             aligned = 0
-            image = self._load_unaligned_image_path(id)
+            image = self._load_unaligned_features(id)
             
         return caption, image, aligned
     
     def __len__(self):
+        """
+        Returns length of dataset
+        
+        :return: int length of dataset
+        """
         return len(self.ids)
         
         
