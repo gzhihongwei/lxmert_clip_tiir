@@ -104,20 +104,11 @@ def main():
                         type=str,
                         required=True,
                         help='Path to the data directory that has coco')
-    parser.add_argument('--use_restval',
-                        default=None,
-                        type=bool,
-                        required=True,
-                        help='Whether to use the restval split from Karpathy et al. in training')
     parser.add_argument('--prob_unaligned',
                         default=None,
                         type=float,
                         required=True,
                         help='Probability that the images for each caption are randomly sampled from the negative images.')
-    parser.add_argument("--do_train",
-                        action='store_true',
-                        required=True,
-                        help="Whether to run training.")
     parser.add_argument("--output_dir",
                         default=None,
                         type=str,
@@ -125,6 +116,12 @@ def main():
                         help="The output directory where the model checkpoints will be written.")
     
     ## Optional parameters
+    parser.add_argument('--use_restval',
+                        action='store_true',
+                        help='Whether to use the restval split from Karpathy et al. in training')
+    parser.add_argument("--do_train",
+                        action='store_true',
+                        help="Whether to run training.")
     parser.add_argument("--train_batch_size",
                         default=128,
                         type=int,
