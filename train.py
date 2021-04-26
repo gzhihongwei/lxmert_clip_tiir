@@ -19,56 +19,6 @@ from transformers.optimization import AdamW, get_linear_schedule_with_warmup
 from transformers.trainer_utils import get_last_checkpoint, is_main_process
 
 
-def rank_captions(model, all_input_ids, all_token_type_ids, 
-                  all_attention_masks, query_visual_feats, query_visual_pos):
-    model.eval()
-    
-    ranks = torch.zeros((100, all_input_ids.size(0))).cuda()
-    
-    for i, (visual_feats, visual_pos) in enumerate(zip(query_visual_feats, query_visual_pos)):
-        scores = torch.zeros(all_input_ids.size(0)).cuda()
-        
-        for j in range(0, all_input_ids.size(0), 100):
-            with torch.no_grad():
-                batch_scores = model(all_input_ids[j:j+100],
-                                     visual_feats.expand(100, *visual_feats.shape),
-                                     visual_pos.expand(100, *visual_pos.shape),
-                                     all_attention_masks[j:j+100],
-                                     all_token_type_ids[j:j+100])
-                scores[j:j+100] = batch_scores
-                
-        ranks[i] = scores
-    
-    model.train()
-    
-    return ranks
-
-
-def rank_images(model, query_input_ids, query_token_type_ids, query_attention_masks,
-                all_visual_feats, all_visual_pos):
-    model.eval()
-    
-    ranks = torch.zeros((100, all_visual_feats.size(0))).cuda()
-    
-    for i, (input_ids, token_type_ids, attention_mask) in enumerate(zip(query_input_ids, query_token_type_ids, query_attention_masks)):
-        scores = torch.zeros(all_visual_feats.size(0)).cuda()
-        
-        for j in range(0, all_visual_feats.size(0), 100):
-            with torch.no_grad():
-                batch_scores = model(input_ids.expand(100, *input_ids.shape),
-                                     all_visual_feats[j:j+100],
-                                     all_visual_pos[j:j+100],
-                                     attention_mask.expand(100, *attention_mask.shape),
-                                     token_type_ids.expand(100, *token_type_ids.shape))
-                scores[j:j+100] = batch_scores
-                
-        ranks[i] = scores
-
-    model.train()
-    
-    return ranks
-
-
 def validate(val_loader, tokenizer, model, logger):
     # compute the encoding for all the validation images and captions
     all_input_ids, all_token_type_ids, all_attention_masks, all_visual_feats, all_visual_pos = encode_data(tokenizer, 
