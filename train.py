@@ -69,7 +69,7 @@ def rank_images(model, query_input_ids, query_token_type_ids, query_attention_ma
     return ranks
 
 
-def validate(val_loader, tokenizer, model):
+def validate(val_loader, tokenizer, model, logger):
     # compute the encoding for all the validation images and captions
     all_input_ids, all_token_type_ids, all_attention_masks, all_visual_feats, all_visual_pos = encode_data(tokenizer, 
                                                                                                            val_loader, 
@@ -318,7 +318,7 @@ def main():
                     global_step += 1
                     
                 # evaluate on validation set
-                rsum = validate(val_dataloader, tokenizer, model)
+                rsum = validate(val_dataloader, tokenizer, model, logger)
 
                 # remember best R@ sum and save checkpoint
                 is_best = rsum > best_rsum
