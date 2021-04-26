@@ -234,8 +234,8 @@ def main():
             # (it doesn't return item back by index)
             train_sampler = DistributedSampler(train_dataset)
             val_sampler = DistributedSampler(val_dataset, shuffle=False)
-        train_dataloader = DataLoader(train_dataset, batch_sampler=train_sampler, batch_size=args.train_batch_size)
-        val_dataloader = DataLoader(val_dataset, batch_sampler=val_sampler, batch_size=args.train_batch_size)
+        train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
+        val_dataloader = DataLoader(val_dataset, sampler=val_sampler, batch_size=args.train_batch_size)
 
         model.train()
         
