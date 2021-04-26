@@ -19,12 +19,6 @@ from transformers.optimization import AdamW, get_linear_schedule_with_warmup
 from transformers.trainer_utils import get_last_checkpoint, is_main_process
 
 
-logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
-                    datefmt='%m/%d/%Y %H:%M:%S',
-                    level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
 def rank_captions(model, all_input_ids, all_token_type_ids, 
                   all_attention_masks, query_visual_feats, query_visual_pos):
     model.eval()
@@ -79,15 +73,15 @@ def validate(val_loader, tokenizer, model):
     # compute the encoding for all the validation images and captions
     all_input_ids, all_token_type_ids, all_attention_masks, all_visual_feats, all_visual_pos = encode_data(tokenizer, 
                                                                                                            val_loader, 
-                                                                                                           logging=logging.info)
+                                                                                                           logging=logger.info)
 
     # caption retrieval
     (r1, r5, r10, medr, meanr) = i2t(model, all_input_ids, all_token_type_ids, all_attention_masks, all_visual_feats, all_visual_pos)
-    logging.info("Image to text: %.1f, %.1f, %.1f, %.1f, %.1f" %
+    logger.info("Image to text: %.1f, %.1f, %.1f, %.1f, %.1f" %
                  (r1, r5, r10, medr, meanr))
     # image retrieval
     (r1i, r5i, r10i, medri, meanr) = t2i(model, all_input_ids, all_token_type_ids, all_attention_masks, all_visual_feats, all_visual_pos)
-    logging.info("Text to image: %.1f, %.1f, %.1f, %.1f, %.1f" %
+    logger.info("Text to image: %.1f, %.1f, %.1f, %.1f, %.1f" %
                  (r1i, r5i, r10i, medri, meanr))
     # sum of recalls to be used for early stopping
     currscore = r1 + r5 + r10 + r1i + r5i + r10i
@@ -187,6 +181,7 @@ def main():
         datefmt="%m/%d/%Y %H:%M:%S",
         handlers=[logging.StreamHandler(sys.stdout)],
     )
+    logger = logging.getLogger(__name__)
     logger.setLevel(logging.INFO if is_main_process(args.local_rank) else logging.WARN)
     
     if args.local_rank == -1 or args.no_cuda:
