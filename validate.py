@@ -2,7 +2,7 @@ from __future__ import print_function
 
 import numpy as np
 import torch
-from models.lxmert import rank_captions, rank_images
+from train import rank_captions, rank_images
 
 
 def encode_data(tokenizer, data_loader, log_step=10, logging=print):
