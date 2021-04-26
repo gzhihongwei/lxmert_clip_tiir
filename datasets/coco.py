@@ -66,42 +66,32 @@ def get_paths(path, use_restval=False):
     return roots, ids
 
 
-def get_loader_single(root, json, prob_unaligned, batch_size=100,
-                      shuffle=True, num_workers=2, ids=None):
+def get_dataset(root, json, prob_unaligned, ids=None, testing=False):
     """
-    Returns torch.utils.data.DataLoader for custom COCO dataset.
+    Returns torch.utils.data.DataSet for custom COCO dataset.
     
     :param root: path to coco directory
     :param json: path to annotation file
     :param prob_unaligned: probability that the image-caption is aligned
-    :param batch_size: batch size for dataloader
-    :param shuffle: whether to shuffle the batches in the dataloader
-    :param num_workers: number of subprocesses helping loading data
     :param ids: caption ids to consider
-    :return: torch.utils.data.DataLoader of the specified split of COCO
+    :param testing: whether the split in the dataset is for evaluation
+    :return: torch.utils.data.DataSet of the specified split of COCO
     """
     # COCO custom dataset
     dataset = CoCoDataset(root=root,
                           json=json,
                           prob_unaligned=prob_unaligned,
-                          ids=ids)
+                          ids=ids,
+                          testing=testing)
     
-    # Data loader
-    data_loader = data.DataLoader(dataset=dataset,
-                                  batch_size=batch_size,
-                                  shuffle=shuffle,
-                                  pin_memory=True,
-                                  num_workers=num_workers)
-    return data_loader
+    return dataset
 
-def get_loader(batch_size, workers, opt):
+def get_train_dataset(opt):
     """
-    Returns the training PyTorch Dataloader for COCO.
+    Returns the training PyTorch DataSet for COCO.
     
-    :param batch_size: batch size
-    :param workers: number of workers for the dataloader
     :param opt: parsed arguments from argparse
-    :return: torch.utils.data.DataLoader for the training split (might include
+    :return: torch.utils.data.DataSet for the training split (might include
              'restval' based on opt)
     """
     
@@ -110,26 +100,22 @@ def get_loader(batch_size, workers, opt):
     # Build the paths to everything
     roots, ids = get_paths(dpath, opt.use_restval)
 
-    # Get the loaders
-    train_loader = get_loader_single(roots['train']['img'],
-                                     roots['train']['cap'],
-                                     opt.prob_unaligned,
-                                     ids=ids['train'],
-                                     batch_size=batch_size,
-                                     shuffle=True,
-                                     num_workers=workers)
+    # Get the dataset
+    train_dataset = get_dataset(roots['train']['img'],
+                                roots['train']['cap'],
+                                opt.prob_unaligned,
+                                ids=ids['train'])
 
-    return train_loader
+    return train_dataset
 
 
-def get_test_loader(split_name, batch_size, workers, opt):
+def get_test_dataset(split_name, opt):
     """
-    Returns the test PyTorch Dataloader for COCO.
+    Returns the test PyTorch DataSet for COCO.
     
-    :param batch_size: batch size
-    :param workers: number of workers for the dataloader
+    :param split_name: name of split, either 'val' or 'test'
     :param opt: parsed arguments from argparse
-    :return: torch.utils.data.DataLoader
+    :return: torch.utils.data.DataSet for the split specified according to Karpathy et al.y
     """
     
     # Sanity check
@@ -141,20 +127,18 @@ def get_test_loader(split_name, batch_size, workers, opt):
     roots, ids = get_paths(dpath, opt.use_restval)
 
     # Get the loader
-    test_loader = get_loader_single(roots[split_name]['img'],
-                                    roots[split_name]['cap'],
-                                    0, ids=ids[split_name],
-                                    batch_size=batch_size,
-                                    shuffle=False,
-                                    num_workers=workers)
-    return test_loader
+    test_dataset = get_dataset(roots[split_name]['img'],
+                               roots[split_name]['cap'],
+                               0, ids=ids[split_name],
+                               testing=True)
+    return test_dataset
 
 
 class CoCoDataset(data.Dataset):
     """
     Pytorch dataset that handles COCO train2014 and val2014 splits
     """
-    def __init__(self, root, json, prob_unaligned, ids):
+    def __init__(self, root, json, prob_unaligned, ids, testing=False):
         """
         Constructor for CoCoDataset
         
@@ -188,6 +172,9 @@ class CoCoDataset(data.Dataset):
         # Probability of returning an unaligned image from caption
         assert 0 <= prob_unaligned <= 1, "prob_unaligned must be a probability" 
         self.prob_unaligned = prob_unaligned
+        
+        # Keeps track of whether the dataset is for evaluation or testing
+        self.testing = testing
     
     @staticmethod
     def _load_image_features(root, image_id):
@@ -221,7 +208,7 @@ class CoCoDataset(data.Dataset):
             # Normalize and concatenate
             reformed_boxes = np.concatenate((x/width, y/height, w/width, h/height), axis=1)
             
-            return reformed_boxes, features
+            return features, reformed_boxes
             
         # Load cached features
         faster_features = np.load(os.path.join(root, f'{image_id}.npz'))
@@ -258,7 +245,7 @@ class CoCoDataset(data.Dataset):
         Gets the caption, Faster RCNN features, and whether the caption and image are aligned for index
         
         :param index: index in the list of caption_ids
-        :return: Tuple[str, ]
+        :return: Tuple[str, numpy.ndarray, numpy.ndarray, int]
         """
         
         # If the index is less than the breakpoint, it is part of the 
@@ -276,15 +263,15 @@ class CoCoDataset(data.Dataset):
         # Load corresponding COCO data
         caption = coco.anns[ann_id]['caption']
         img_id = coco.anns[ann_id]['image_id']
-        boxes, features = self._load_image_features(root, img_id)
+        visual_feats, visual_pos = self._load_image_features(root, img_id)
         aligned = 1
         
         # Randomly unalign pairing with probability of prob_unaligned
         if random.random() < self.prob_unaligned:
-            boxes, features = self._load_unaligned_features(root, img_id)
+            visual_feats, visual_pos = self._load_unaligned_features(root, img_id)
             aligned = 0
             
-        return caption, boxes, features, aligned, index, img_id
+        return caption, visual_feats, visual_pos, index if self.testing else aligned
     
     def __len__(self):
         """
