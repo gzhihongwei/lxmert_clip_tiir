@@ -227,7 +227,7 @@ class CoCoDataset(data.Dataset):
         candidate_img_ids1 = list({anns["image_id"] for anns in self.coco[0].anns.values() if anns["image_id"] != true_img_id})
         bp = len(candidate_img_ids1)
         
-        # If 'retval' is being used or not
+        # If 'restval' is being used or not
         if len(self.coco) == 2:
             candidate_img_ids2 = list({anns["image_id"] for anns in self.coco[1].anns.values() if anns["image_id"] != true_img_id})
             candidate_img_ids = candidate_img_ids1 + candidate_img_ids2
@@ -268,7 +268,7 @@ class CoCoDataset(data.Dataset):
         
         # Randomly unalign pairing with probability of prob_unaligned
         if random.random() < self.prob_unaligned:
-            visual_feats, visual_pos = self._load_unaligned_features(root, img_id)
+            visual_feats, visual_pos = self._load_unaligned_features(img_id)
             aligned = 0
             
         return caption, visual_feats, visual_pos, index if self.testing else aligned
