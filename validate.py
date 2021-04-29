@@ -15,15 +15,15 @@ def encode_data(tokenizer, data_loader, log_step=10, logging=print):
     all_visual_pos = None
     
     for i, (captions, visual_feats, visual_pos, indices) in enumerate(data_loader):
-        tokenized = tokenizer(captions, padding='max_length', return_tensors='pt')
+        tokenized = tokenizer(list(captions), padding='max_length', return_tensors='pt')
         input_ids, token_type_ids, attention_masks = tokenized['input_ids'], tokenized['token_type_ids'], tokenized['attention_mask']
         # initialize the numpy arrays given the size of the embeddings
         if all_input_ids is None:
             all_input_ids = np.zeros((len(data_loader.dataset), input_ids.size(1)))
             all_token_type_ids = np.zeros((len(data_loader.dataset), token_type_ids.size(1)))
             all_attention_masks = np.zeros((len(data_loader.dataset), attention_masks.size(1)))
-            all_visual_feats = np.zeros((len(data_loader.dataset), visual_feats.size(1)))
-            all_visual_pos = np.zeros((len(data_loader.dataset), visual_pos.size(1)))
+            all_visual_feats = np.zeros((len(data_loader.dataset), *visual_feats.shape[1:]))
+            all_visual_pos = np.zeros((len(data_loader.dataset), *visual_pos.shape[1:]))
 
         # preserve the embeddings by copying from gpu and converting to numpy
         all_input_ids[indices] = input_ids.cpu().numpy().copy()
@@ -55,7 +55,7 @@ def rank_captions(model, all_input_ids, all_token_type_ids,
                                      visual_pos.expand(100, *visual_pos.shape),
                                      all_attention_masks[j:j+100],
                                      all_token_type_ids[j:j+100])
-                scores[j:j+100] = batch_scores
+                scores[j:j+100] = batch_scores.matching_score.flatten()
                 
         ranks[i] = scores
     
@@ -80,7 +80,7 @@ def rank_images(model, query_input_ids, query_token_type_ids, query_attention_ma
                                      all_visual_pos[j:j+100],
                                      attention_mask.expand(100, *attention_mask.shape),
                                      token_type_ids.expand(100, *token_type_ids.shape))
-                scores[j:j+100] = batch_scores
+                scores[j:j+100] = batch_scores.matching_score.flatten()
                 
         ranks[i] = scores
 
@@ -90,14 +90,14 @@ def rank_images(model, query_input_ids, query_token_type_ids, query_attention_ma
 
 
 def i2t(model, all_input_ids, all_token_type_ids, all_attention_masks,
-        all_visual_feats, all_visual_pos, npts=None, return_ranks=False):
+        all_visual_feats, all_visual_pos, logging, npts=None, return_ranks=False):
     """
     Images->Text (Image Annotation)
     Images: (5N, K) matrix of images
     Captions: (5N, K) matrix of captions
     """
     if npts is None:
-        npts = all_input_ids.shape[0] / 5
+        npts = int(all_input_ids.shape[0] / 5)
     index_list = []
 
     ranks = np.zeros(npts)
@@ -109,12 +109,13 @@ def i2t(model, all_input_ids, all_token_type_ids, all_attention_masks,
         bs = 100
         
         if index % bs == 0:
+            logging('On batch {}/{}'.format((index // bs) + 1, npts // bs))
             mx = min(all_visual_feats.shape[0], 5 * (index + bs))
             visual_feats = all_visual_feats[5 * index:mx:5]
             visual_pos = all_visual_pos[5 * index:mx:5]
             d2 = rank_captions(model,
-                               torch.Tensor(all_input_ids).cuda(),
-                               torch.Tensor(all_token_type_ids).cuda(),
+                               torch.Tensor(all_input_ids).long().cuda(),
+                               torch.Tensor(all_token_type_ids).long().cuda(),
                                torch.Tensor(all_attention_masks).cuda(),
                                torch.Tensor(visual_feats).cuda(),
                                torch.Tensor(visual_pos).cuda()).cpu().numpy()
@@ -146,14 +147,14 @@ def i2t(model, all_input_ids, all_token_type_ids, all_attention_masks,
 
 
 def t2i(model, all_input_ids, all_token_type_ids, all_attention_masks,
-        all_visual_feats, all_visual_pos, npts=None, return_ranks=False):
+        all_visual_feats, all_visual_pos, logging, npts=None, return_ranks=False):
     """
     Text->Images (Image Search)
     Images: (5N, K) matrix of images
     Captions: (5N, K) matrix of captions
     """
     if npts is None:
-        npts = all_input_ids.shape[0] / 5
+        npts = int(all_input_ids.shape[0] / 5)
     all_visual_feats = all_visual_feats[::5]
     all_visual_pos = all_visual_pos[::5]
 
@@ -165,14 +166,15 @@ def t2i(model, all_input_ids, all_token_type_ids, all_attention_masks,
         bs = 100
         
         if 5 * index % bs == 0:
+            logging('On batch {}/{}'.format((5 * index // bs) + 1, 5 * npts // bs))
             mx = min(all_input_ids.shape[0], 5 * index + bs)
             # Get query captions
             query_input_ids = all_input_ids[5 * index:mx]
             query_token_type_ids = all_token_type_ids[5 * index:mx]
             query_attention_masks = all_attention_masks[5 * index:mx]
             d2 = rank_images(model,
-                             torch.Tensor(query_input_ids).cuda(),
-                             torch.Tensor(query_token_type_ids).cuda(),
+                             torch.Tensor(query_input_ids).long().cuda(),
+                             torch.Tensor(query_token_type_ids).long().cuda(),
                              torch.Tensor(query_attention_masks).cuda(),
                              torch.Tensor(all_visual_feats).cuda(),
                              torch.Tensor(all_visual_pos).cuda()).cpu().numpy()
