@@ -113,7 +113,7 @@ class LxmertForTBIR(LxmertPreTrainedModel):
         matching_score = self.match_head(pooled_output)
         loss = None
         if labels is not None:
-            loss = self.loss(matching_score, labels)
+            loss = self.loss(matching_score, labels.unsqueeze(1))
 
         if not return_dict:
             output = (matching_score,) + lxmert_output[3:]
