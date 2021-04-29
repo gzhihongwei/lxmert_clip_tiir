@@ -42,7 +42,9 @@ def featurize_coco(split, img_root):
     
     # Featurize each image in the COCO split
     for image_filename, image_id in tqdm(zip(image_filenames, image_ids)):
-        detections = get_detections_from_im(faster_rcnn, classes, os.path.join(img_root, image_filename), image_id, faster_args)
+        if (os.path.isfile(os.path.join(faster_dir, f'{image_id}.npz'))):
+            continue
+        detections = get_detections_from_im(faster_rcnn, classes, os.path.join(img_root, image_filename), image_id, faster_args, 0)
         np.savez_compressed(os.path.join(faster_dir, f'{image_id}.npz'), **detections)
         
     print('Done obtaining all Faster-RCNN detections')
@@ -50,13 +52,7 @@ def featurize_coco(split, img_root):
 
 if __name__ == '__main__':    
     os.chdir(os.path.join("..", "..", "datasets", "coco"))
-    split = 'train2014'
+    split = 'test2014'
     img_root = os.path.join("images", split)
     featurize_coco(split, img_root)
-        
-        
-        
-    
-    
-    
-    
+
