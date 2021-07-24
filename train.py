@@ -26,11 +26,11 @@ def validate(val_loader, tokenizer, model, logger):
                                                                                                            logging=logger.info)
 
     # caption retrieval
-    (r1, r5, r10, medr, meanr) = i2t(model, all_input_ids, all_token_type_ids, all_attention_masks, all_visual_feats, all_visual_pos)
+    (r1, r5, r10, medr, meanr) = i2t(model, all_input_ids, all_token_type_ids, all_attention_masks, all_visual_feats, all_visual_pos, logging=logger.info)
     logger.info("Image to text: %.1f, %.1f, %.1f, %.1f, %.1f" %
                  (r1, r5, r10, medr, meanr))
     # image retrieval
-    (r1i, r5i, r10i, medri, meanr) = t2i(model, all_input_ids, all_token_type_ids, all_attention_masks, all_visual_feats, all_visual_pos)
+    (r1i, r5i, r10i, medri, meanr) = t2i(model, all_input_ids, all_token_type_ids, all_attention_masks, all_visual_feats, all_visual_pos, logging=logger.info)
     logger.info("Text to image: %.1f, %.1f, %.1f, %.1f, %.1f" %
                  (r1i, r5i, r10i, medri, meanr))
     # sum of recalls to be used for early stopping
@@ -245,10 +245,10 @@ def main():
             tr_loss = 0
             nb_tr_examples, nb_tr_steps = 0, 0
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
-                batch[0] = tokenizer(batch[0], padding=True, return_tensors='pt')
+                batch[0] = tokenizer(list(batch[0]), padding=True, return_tensors='pt')
                 batch = tuple(t.to(device) for t in batch)
                 tokenized, visual_feats, visual_pos, labels = batch
-                outputs = model(visual_feats=visual_feats, visual_pos=visual_pos, labels=labels, **tokenized)
+                outputs = model(visual_feats=visual_feats.float(), visual_pos=visual_pos.float(), labels=labels.float(), **tokenized)
                 loss = outputs[0]
                 if n_gpu > 1:
                     loss = loss.mean() # mean() to average on multi-gpu.
@@ -262,8 +262,8 @@ def main():
                 nb_tr_examples += tokenized['input_ids'].size(0)
                 nb_tr_steps += 1
                 if (step + 1) % args.gradient_accumulation_steps == 0:
-                    scheduler.step()  # Update learning rate schedule
                     optimizer.step()
+                    scheduler.step()  # Update learning rate schedule
                     optimizer.zero_grad()
                     global_step += 1
                     
