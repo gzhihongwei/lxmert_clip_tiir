@@ -77,7 +77,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
 
     # Prepare model
-    model = LxmertForTBIR.from_pretrained(num_labels=1, state_dict=checkpoint['model']).to(device)
+    model = LxmertForTBIR.from_pretrained('unc-nlp/lxmert-base-uncased', num_labels=1, state_dict=checkpoint['model']).to(device)
     
     # torch.cuda.manual_seed_all(args.seed)
     # model = DDP(model, device_ids=[rank])
