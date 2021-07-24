@@ -50,6 +50,7 @@ def main():
                         help="random seed for initialization")
 
     args = parser.parse_args()
+    args.use_restval = False
     
     # Setup logging
     logging.basicConfig(
