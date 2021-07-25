@@ -25,10 +25,13 @@ def validate(val_loader, tokenizer, model, logger):
                                                                                                            val_loader, 
                                                                                                            logging=logger.info)
 
+    logger.info('Starting image to text')
     # caption retrieval
     (r1, r5, r10, medr, meanr) = i2t(model, all_input_ids, all_token_type_ids, all_attention_masks, all_visual_feats, all_visual_pos, logging=logger.info)
     logger.info("Image to text: %.1f, %.1f, %.1f, %.1f, %.1f" %
                  (r1, r5, r10, medr, meanr))
+    
+    logger.info('Starting text to image')
     # image retrieval
     (r1i, r5i, r10i, medri, meanr) = t2i(model, all_input_ids, all_token_type_ids, all_attention_masks, all_visual_feats, all_visual_pos, logging=logger.info)
     logger.info("Text to image: %.1f, %.1f, %.1f, %.1f, %.1f" %
