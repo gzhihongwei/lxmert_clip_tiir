@@ -4,11 +4,16 @@ import os
 import sys
 import shutil
 
+import torch_distrib
+
 from datasets.coco import get_test_dataset, get_train_dataset
 from models.lxmert import LxmertForTBIR
 from validate import i2t, t2i, encode_data
 
 import torch
+import torch.distributed as dist
+from torch.cuda.amp import autocast, GradScaler
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import trange, tqdm
@@ -72,13 +77,10 @@ def main():
     parser.add_argument('--use_restval',
                         action='store_true',
                         help='Whether to use the restval split from Karpathy et al. in training')
-    parser.add_argument("--do_train",
-                        action='store_true',
-                        help="Whether to run training.")
-    parser.add_argument("--train_batch_size",
+    parser.add_argument("--batch_size",
                         default=128,
                         type=int,
-                        help="Total batch size for training.")
+                        help="Total batch size")
     parser.add_argument("--learning_rate",
                         default=3e-4,
                         type=float,
@@ -95,16 +97,6 @@ def main():
                         default=0, 
                         type=int,
                         help="Linear warmup over warmup_steps.")
-    parser.add_argument("--no_cuda",
-                        action='store_true',
-                        help="Whether not to use CUDA when available")
-    parser.add_argument("--on_memory",
-                        action='store_true',
-                        help="Whether to load train samples into memory or use disk")
-    parser.add_argument("--local_rank",
-                        type=int,
-                        default=-1,
-                        help="local_rank for distributed training on gpus")
     parser.add_argument('--seed',
                         type=int,
                         default=42,
@@ -116,11 +108,6 @@ def main():
     parser.add_argument('--fp16',
                         action='store_true',
                         help="Whether to use 16-bit float precision instead of 32-bit")
-    parser.add_argument('--loss_scale',
-                        type = float, default = 0,
-                        help = "Loss scaling to improve fp16 numeric stability. Only used when fp16 set to True.\n"
-                        "0 (default value): dynamic loss scaling.\n"
-                        "Positive power of 2: static loss scaling value.\n")
     
     args = parser.parse_args()
     print(args)
@@ -132,17 +119,16 @@ def main():
         handlers=[logging.StreamHandler(sys.stdout)],
     )
     logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO if is_main_process(args.local_rank) else logging.WARN)
+    logger.setLevel(logging.INFO if is_main_process(torch_distrib.local_rank) else logging.WARN)
     
-    if args.local_rank == -1 or args.no_cuda:
-        device = torch.device("cuda" if torch.cuda.is_available() and not args.no_cuda else "cpu")
-        n_gpu = torch.cuda.device_count()
-    else:
-        torch.cuda.set_device(args.local_rank)
-        device = torch.device("cuda", args.local_rank)
-        n_gpu = 1
-        # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
-        torch.distributed.init_process_group(backend='nccl')
+    torch.cuda.set_device(torch_distrib.local_rank)
+    device = torch.device("cuda")
+    # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
+    dist.init_process_group(backend='nccl',
+                            init_method='env://',
+                            world_size=torch_distrib.world_size,
+                            rank=torch_distrib.rank)
+    n_gpu = torch.cuda.device_count()
     logger.info("device: {} n_gpu: {}, distributed training: {}, 16-bits training: {}".format(
         device, n_gpu, bool(args.local_rank != -1), args.fp16))
 
@@ -157,136 +143,113 @@ def main():
     if n_gpu > 0:
         torch.cuda.manual_seed_all(args.seed)
 
-    if not args.do_train:
-        raise ValueError("Training is currently the only implemented execution option. Please set `do_train`.")
-
     if os.path.exists(args.output_dir) and os.listdir(args.output_dir):
         raise ValueError("Output directory ({}) already exists and is not empty.".format(args.output_dir))
-    if not os.path.exists(args.output_dir) and (n_gpu > 1 and torch.distributed.get_rank() == 0  or n_gpu <= 1):
+    if not os.path.exists(args.output_dir) and (n_gpu > 1 and dist.get_rank() == 0  or n_gpu <= 1):
         os.makedirs(args.output_dir)
 
     tokenizer = LxmertTokenizerFast.from_pretrained('unc-nlp/lxmert-base-uncased')
 
-    #train_examples = None
-    num_train_optimization_steps = None
-    if args.do_train:
-        print(f"Loading COCO Train Dataset {'with' if args.use_restval else 'without'} restval")
-        train_dataset = get_train_dataset(args)
-        val_dataset = get_test_dataset('val', args)
-        num_train_optimization_steps = int(
-            len(train_dataset) / args.train_batch_size / args.gradient_accumulation_steps) * args.num_train_epochs
-        if args.local_rank != -1:
-            num_train_optimization_steps = num_train_optimization_steps // torch.distributed.get_world_size()
+    logger.info(f"Loading COCO Train Dataset {'with' if args.use_restval else 'without'} restval")
+    train_dataset = get_train_dataset(args)
+    val_dataset = get_test_dataset('val', args)
+    num_train_optimization_steps = int(
+        len(train_dataset) / args.train_batch_size / args.gradient_accumulation_steps) * args.num_train_epochs
+    if n_gpu > 1:
+        num_train_optimization_steps = num_train_optimization_steps // dist.get_world_size()
 
     # Prepare model
     model = LxmertForTBIR.from_pretrained('unc-nlp/lxmert-base-uncased', num_labels=1)
     if args.fp16:
-        model.half()
+        scaler = GradScaler()
     model.to(device)
-    if args.local_rank != -1:
-        try:
-            from apex.parallel import DistributedDataParallel as DDP
-        except ImportError:
-            raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training.")
-        model = DDP(model)
-    elif n_gpu > 1:
-        model = torch.nn.DataParallel(model)
+    if n_gpu > 1:
+        model = DDP(model, device_ids=[torch_distrib.local_rank])
 
     # Prepare optimizer
-    if args.do_train:
-        param_optimizer = list(model.named_parameters())
-        no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
-        optimizer_grouped_parameters = [
-            {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
-            {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
-        ]
+    param_optimizer = list(model.named_parameters())
+    no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
+    optimizer_grouped_parameters = [
+        {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
+        {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+    ]
 
-        if args.fp16:
-            try:
-                from apex.optimizers import FP16_Optimizer
-                from apex.optimizers import FusedAdam
-            except ImportError:
-                raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training.")
+    optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
+    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps,
+                                                num_training_steps=num_train_optimization_steps)
 
-            optimizer = FusedAdam(optimizer_grouped_parameters,
-                                  lr=args.learning_rate,
-                                  bias_correction=False,
-                                  max_grad_norm=1.0)
-            if args.loss_scale == 0:
-                optimizer = FP16_Optimizer(optimizer, dynamic_loss_scale=True)
+    logger.info("***** Running training *****")
+    logger.info("  Num examples = %d", len(train_dataset))
+    logger.info("  Batch size = %d", args.batch_size)
+    logger.info("  Num steps = %d", num_train_optimization_steps)
+
+    if n_gpu == 1:
+        train_sampler = RandomSampler(train_dataset)
+        val_sampler = SequentialSampler(val_dataset)
+        args.train_batch_size = args.batch_size
+    else:
+        train_sampler = DistributedSampler(train_dataset, num_replicas=torch_distrib.world_size, rank=torch_distrib.rank)
+        val_sampler = DistributedSampler(val_dataset, shuffle=False, num_replicas=torch_distrib.world_size, rank=torch_distrib.rank)
+        args.train_batch_size = args.batch_size // torch_distrib.world_size
+    train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size, num_workers=0, pin_memory=True)
+    val_dataloader = DataLoader(val_dataset, sampler=val_sampler, batch_size=args.train_batch_size, num_workers=0, pin_memory=True)
+
+    model.train()
+    
+    best_rsum = 0
+    
+    for epoch in trange(int(args.num_train_epochs), desc="Epoch"):
+        for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
+            batch[0] = tokenizer(list(batch[0]), padding=True, return_tensors='pt')
+            batch = tuple(t.to(device, non_blocking=True) for t in batch)
+            tokenized, visual_feats, visual_pos, labels = batch
+            
+            if args.fp16:
+                with autocast():
+                    outputs = model(visual_feats=visual_feats.float(), visual_pos=visual_pos.float(), labels=labels.float(), **tokenized)
+                    loss = outputs[0]
             else:
-                optimizer = FP16_Optimizer(optimizer, static_loss_scale=args.loss_scale)
-
-        else:
-            optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
-        scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=args.warmup_steps,
-                                                    num_training_steps=num_train_optimization_steps)
-
-    global_step = 0
-    if args.do_train:
-        logger.info("***** Running training *****")
-        logger.info("  Num examples = %d", len(train_dataset))
-        logger.info("  Batch size = %d", args.train_batch_size)
-        logger.info("  Num steps = %d", num_train_optimization_steps)
-
-        if args.local_rank == -1:
-            train_sampler = RandomSampler(train_dataset)
-            val_sampler = SequentialSampler(val_dataset)
-        else:
-            #TODO: check if this works with current data generator from disk that relies on next(file)
-            # (it doesn't return item back by index)
-            train_sampler = DistributedSampler(train_dataset)
-            val_sampler = DistributedSampler(val_dataset, shuffle=False)
-        train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
-        val_dataloader = DataLoader(val_dataset, sampler=val_sampler, batch_size=args.train_batch_size)
-
-        model.train()
-        
-        best_rsum = 0
-        
-        for epoch in trange(int(args.num_train_epochs), desc="Epoch"):
-            tr_loss = 0
-            nb_tr_examples, nb_tr_steps = 0, 0
-            for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
-                batch[0] = tokenizer(list(batch[0]), padding=True, return_tensors='pt')
-                batch = tuple(t.to(device) for t in batch)
-                tokenized, visual_feats, visual_pos, labels = batch
                 outputs = model(visual_feats=visual_feats.float(), visual_pos=visual_pos.float(), labels=labels.float(), **tokenized)
                 loss = outputs[0]
-                if n_gpu > 1:
-                    loss = loss.mean() # mean() to average on multi-gpu.
-                if args.gradient_accumulation_steps > 1:
-                    loss = loss / args.gradient_accumulation_steps
+                
+            if n_gpu > 1:
+                loss = loss.mean() # mean() to average on multi-gpu.
+            if args.gradient_accumulation_steps > 1:
+                loss = loss / args.gradient_accumulation_steps
+                
+            if args.fp16:
+                scaler.scale(loss).backward()
+            else:
+                loss.backward()
+                
+            if (step + 1) % args.gradient_accumulation_steps == 0:
                 if args.fp16:
-                    optimizer.backward(loss)
+                    scaler.step(optimizer)
+                    scaler.update()
                 else:
-                    loss.backward()
-                tr_loss += loss.item()
-                nb_tr_examples += tokenized['input_ids'].size(0)
-                nb_tr_steps += 1
-                if (step + 1) % args.gradient_accumulation_steps == 0:
                     optimizer.step()
-                    scheduler.step()  # Update learning rate schedule
-                    optimizer.zero_grad()
-                    global_step += 1
-                    
-                # evaluate on validation set
-                rsum = validate(val_dataloader, tokenizer, model, logger)
+                scheduler.step()  # Update learning rate schedule
+                optimizer.zero_grad()
+                
+            # evaluate on validation set
+            # rsum = validate(val_dataloader, tokenizer, model, logger)
 
-                # remember best R@ sum and save checkpoint
-                is_best = rsum > best_rsum
-                best_rsum = max(rsum, best_rsum)
-                save_checkpoint({
-                    'epoch': epoch + 1,
-                    'model': model.state_dict(),
-                    'best_rsum': best_rsum
-                }, is_best, prefix=args.output_dir + '/')
+            # remember best R@ sum and save checkpoint
+            if torch_distrib.rank == 0:
+                torch.save(model.state_dict(), f'{args.output_dir}/checkpoint-{epoch}.pth.tar')
+                # is_best = rsum > best_rsum
+                # best_rsum = max(rsum, best_rsum)
+                # save_checkpoint({
+                #     'epoch': epoch + 1,
+                #     'model': model.state_dict(),
+                #     'best_rsum': best_rsum
+                # }, is_best, prefix=args.output_dir + '/')
 
-        # Save a trained model
-        if args.do_train and (n_gpu > 1 and torch.distributed.get_rank() == 0 or n_gpu <=1):
-            logger.info("******* Saving fine - tuned model *******")
-            model.save_pretrained(args.output_dir)
-            tokenizer.save_pretrained(args.output_dir)
+    # Save a trained model
+    if (n_gpu > 1 and dist.get_rank() == 0) or n_gpu == 1:
+        logger.info("******* Saving fine - tuned model *******")
+        model.save_pretrained(args.output_dir)
+        tokenizer.save_pretrained(args.output_dir)
 
 
 if __name__ == "__main__":
