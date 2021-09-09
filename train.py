@@ -235,16 +235,16 @@ def main():
             # evaluate on validation set
             # rsum = validate(val_dataloader, tokenizer, model, logger)
 
-            # remember best R@ sum and save checkpoint
-            if dist.get_rank() == 0:
-                torch.save(model.state_dict(), f'{args.output_dir}/checkpoint-{epoch}.pth.tar')
-                # is_best = rsum > best_rsum
-                # best_rsum = max(rsum, best_rsum)
-                # save_checkpoint({
-                #     'epoch': epoch + 1,
-                #     'model': model.state_dict(),
-                #     'best_rsum': best_rsum
-                # }, is_best, prefix=args.output_dir + '/')
+        # remember best R@ sum and save checkpoint
+        if dist.get_rank() == 0:
+            torch.save(model.state_dict(), f'{args.output_dir}/checkpoint-{epoch}.pth.tar')
+            # is_best = rsum > best_rsum
+            # best_rsum = max(rsum, best_rsum)
+            # save_checkpoint({
+            #     'epoch': epoch + 1,
+            #     'model': model.state_dict(),
+            #     'best_rsum': best_rsum
+            # }, is_best, prefix=args.output_dir + '/')
 
     # Save a trained model
     if (n_gpu > 1 and dist.get_rank() == 0) or n_gpu == 1:
