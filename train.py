@@ -4,7 +4,7 @@ import os
 import sys
 import shutil
 
-import torch_distrib
+# import torch_distrib
 
 from datasets.coco import get_test_dataset, get_train_dataset
 from models.lxmert import LxmertForTBIR
@@ -74,13 +74,17 @@ def main():
                         help="The output directory where the model checkpoints will be written.")
     
     ## Optional parameters
+    parser.add_argument('--local_rank',
+                        default=-1,
+                        type=int,
+                        help='Local rank of a process on a node.')
     parser.add_argument('--use_restval',
                         action='store_true',
                         help='Whether to use the restval split from Karpathy et al. in training')
     parser.add_argument("--batch_size",
                         default=128,
                         type=int,
-                        help="Total batch size")
+                        help="Batch size per process.")
     parser.add_argument("--learning_rate",
                         default=3e-4,
                         type=float,
@@ -119,16 +123,16 @@ def main():
         handlers=[logging.StreamHandler(sys.stdout)],
     )
     logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO if is_main_process(torch_distrib.local_rank) else logging.WARN)
+    logger.setLevel(logging.INFO if is_main_process(args.local_rank) else logging.WARN)
     
-    torch.cuda.set_device(torch_distrib.local_rank)
+    torch.cuda.set_device(args.local_rank)
     device = torch.device("cuda")
+    n_gpu = torch.cuda.device_count()
     # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
     dist.init_process_group(backend='nccl',
                             init_method='env://',
-                            world_size=torch_distrib.world_size,
-                            rank=torch_distrib.rank)
-    n_gpu = torch.cuda.device_count()
+                            world_size=dist.get_world_size(),
+                            rank=args.local_rank)
     logger.info("device: {} n_gpu: {}, distributed training: {}, 16-bits training: {}".format(
         device, n_gpu, bool(args.local_rank != -1), args.fp16))
 
@@ -136,7 +140,7 @@ def main():
         raise ValueError("Invalid gradient_accumulation_steps parameter: {}, should be >= 1".format(
                             args.gradient_accumulation_steps))
 
-    args.train_batch_size = args.train_batch_size // args.gradient_accumulation_steps
+    args.batch_size = args.batch_size // args.gradient_accumulation_steps
 
     set_seed(args.seed)
     
@@ -164,7 +168,7 @@ def main():
         scaler = GradScaler()
     model.to(device)
     if n_gpu > 1:
-        model = DDP(model, device_ids=[torch_distrib.local_rank])
+        model = DDP(model, device_ids=[args.local_rank], output_device=args.local_rank)
 
     # Prepare optimizer
     param_optimizer = list(model.named_parameters())
@@ -180,7 +184,7 @@ def main():
 
     logger.info("***** Running training *****")
     logger.info("  Num examples = %d", len(train_dataset))
-    logger.info("  Batch size = %d", args.batch_size)
+    logger.info("  Batch size = %d", args.batch_size * n_gpu)
     logger.info("  Num steps = %d", num_train_optimization_steps)
 
     if n_gpu == 1:
@@ -188,15 +192,12 @@ def main():
         val_sampler = SequentialSampler(val_dataset)
         args.train_batch_size = args.batch_size
     else:
-        train_sampler = DistributedSampler(train_dataset, num_replicas=torch_distrib.world_size, rank=torch_distrib.rank)
-        val_sampler = DistributedSampler(val_dataset, shuffle=False, num_replicas=torch_distrib.world_size, rank=torch_distrib.rank)
-        args.train_batch_size = args.batch_size // torch_distrib.world_size
-    train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size, num_workers=0, pin_memory=True)
-    val_dataloader = DataLoader(val_dataset, sampler=val_sampler, batch_size=args.train_batch_size, num_workers=0, pin_memory=True)
+        train_sampler = DistributedSampler(train_dataset, num_replicas=n_gpu, rank=args.rank)
+        val_sampler = DistributedSampler(val_dataset, shuffle=False, num_replicas=n_gpu, rank=args.rank)
+    train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.batch_size, num_workers=1, pin_memory=True)
+    val_dataloader = DataLoader(val_dataset, sampler=val_sampler, batch_size=args.batch_size, num_workers=1, pin_memory=True)
 
     model.train()
-    
-    best_rsum = 0
     
     for epoch in trange(int(args.num_train_epochs), desc="Epoch"):
         for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
@@ -235,7 +236,7 @@ def main():
             # rsum = validate(val_dataloader, tokenizer, model, logger)
 
             # remember best R@ sum and save checkpoint
-            if torch_distrib.rank == 0:
+            if dist.get_rank() == 0:
                 torch.save(model.state_dict(), f'{args.output_dir}/checkpoint-{epoch}.pth.tar')
                 # is_best = rsum > best_rsum
                 # best_rsum = max(rsum, best_rsum)
