@@ -2,7 +2,7 @@ import logging
 import os
 import sys
 from dataclasses import dataclass, field
-from typing import Optional, Dict, Union, Any
+from typing import List, Optional, Dict, Union, Any
 
 from datasets.coco import get_test_dataset, get_train_dataset
 from models.lxmert import LxmertForTBIR
@@ -69,42 +69,13 @@ class DataTrainingArguments:
     
 
 class LxmertForTBIRTrainer(Trainer):
-    def compute_loss(self, model, inputs, return_outputs=False):
-        print(inputs)
-        return
-        outputs = model(**inputs)
-
-        if self.args.past_index >= 0:
-            self._past = outputs[self.args.past_index]
-
-        loss = outputs["loss"] if isinstance(outputs, dict) else outputs[0]
-
-        return (loss, outputs) if return_outputs else loss
-        
-    def training_step(self, model: nn.Module, inputs: Dict[str, Union[torch.Tensor, Any]]) -> torch.Tensor:
-        model.train()
-        inputs = self._prepare_inputs(inputs)
-        
-        if self.use_amp:
-            with autocast():
-                loss = self.compute_loss(model, inputs)
-        else:
-            loss = self.compute_loss(model, inputs)
-            
-        if self.args.n_gpu > 1:
-            loss = loss.mean() # mean() to average on multi-gpu parallel training
-            
-        if self.args.gradient_accumulation_steps > 1 and not self.deepspeed:
-            loss /= self.args.gradient_accumulation_steps
-            
-        if self.use_amp:
-            self.scaler.scale(loss).backward()
-        elif self.deepspeed:
-            loss = self.deepspeed.backward(loss)
-        else:
-            loss.backward()
-        
-        return loss.detach()
+    def evaluation_loop(self, 
+                        dataloader: torch.utils.data.dataloader.DataLoader, 
+                        description: str, 
+                        prediction_loss_only: Optional[bool] = None, 
+                        ignore_keys: Optional[List[str]] = None, 
+                        metric_key_prefix: str = 'eval'):
+        pass
                 
             
 
