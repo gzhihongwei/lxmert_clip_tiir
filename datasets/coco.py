@@ -276,15 +276,14 @@ class CoCoDataset(data.Dataset):
             visual_feats, visual_pos = self._load_unaligned_features(img_id)
             aligned = 0
             
-        tokenized = self.tokenizer(caption, truncation=True, padding=True)
-        outputs = {key: torch.tensor(val) for key, val in tokenized.items()}
-        outputs['visual_feats'] = torch.tensor(visual_feats)
-        outputs['visual_pos'] = torch.tensor(visual_pos)
+        outputs = self.tokenizer(caption, truncation=True, padding=True)
+        outputs['visual_feats'] = visual_feats
+        outputs['visual_pos'] = visual_pos
         
         if self.testing:
-            outputs['index'] = torch.tensor(index)
+            outputs['index'] = index
         else:
-            outputs['labels'] = torch.tensor(aligned)
+            outputs['labels'] = aligned
             
         return outputs
     
