@@ -269,21 +269,22 @@ class CoCoDataset(data.Dataset):
         caption = coco.anns[ann_id]['caption']
         img_id = coco.anns[ann_id]['image_id']
         visual_feats, visual_pos = self._load_image_features(root, img_id)
-        aligned = 1
+        aligned = 1.0
         
         # Randomly unalign pairing with probability of prob_unaligned
         if random.random() < self.prob_unaligned:
             visual_feats, visual_pos = self._load_unaligned_features(img_id)
-            aligned = 0
+            aligned = 0.0
             
         outputs = self.tokenizer(caption, truncation=True, padding=True)
-        outputs['visual_feats'] = visual_feats
-        outputs['visual_pos'] = visual_pos
+        outputs = {key: torch.tensor(value) for key, value in outputs.items()}
+        outputs['visual_feats'] = torch.tensor(visual_feats)
+        outputs['visual_pos'] = torch.tensor(visual_pos)
         
         if self.testing:
-            outputs['index'] = index
+            outputs['index'] = torch.tensor(index)
         else:
-            outputs['labels'] = aligned
+            outputs['labels'] = torch.tensor(aligned)
             
         return outputs
     

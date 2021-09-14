@@ -76,7 +76,10 @@ class LxmertForTBIRTrainer(Trainer):
                         ignore_keys: Optional[List[str]] = None, 
                         metric_key_prefix: str = 'eval'):
         pass
-                
+
+    #def compute_loss(self, model, inputs, return_outputs=false):
+    #    print(inputs)
+    #    return super().compute_loss(model, inputs, return_outputs)
             
 
 def main():
@@ -128,7 +131,9 @@ def main():
     config = AutoConfig.from_pretrained(
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
+        num_labels=1
     )
+    print(config)
     tokenizer = AutoTokenizer.from_pretrained(
         model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
@@ -136,7 +141,6 @@ def main():
     )
     model = LxmertForTBIR.from_pretrained(
         model_args.model_name_or_path,
-        from_tf=bool(".ckpt" in model_args.model_name_or_path),
         config=config,
         cache_dir=model_args.cache_dir,
     )
