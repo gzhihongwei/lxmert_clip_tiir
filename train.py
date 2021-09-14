@@ -131,7 +131,7 @@ def main():
     # Initializes the distributed backend which will take care of sychronizing nodes/GPUs
     dist.init_process_group(backend='nccl',
                             init_method='env://',
-                            world_size=dist.get_world_size(),
+                            world_size=n_gpu,
                             rank=args.local_rank)
     logger.info("device: {} n_gpu: {}, distributed training: {}, 16-bits training: {}".format(
         device, n_gpu, bool(args.local_rank != -1), args.fp16))
@@ -158,7 +158,7 @@ def main():
     train_dataset = get_train_dataset(args)
     val_dataset = get_test_dataset('val', args)
     num_train_optimization_steps = int(
-        len(train_dataset) / args.train_batch_size / args.gradient_accumulation_steps) * args.num_train_epochs
+        len(train_dataset) / args.batch_size / args.gradient_accumulation_steps) * args.num_train_epochs
     if n_gpu > 1:
         num_train_optimization_steps = num_train_optimization_steps // dist.get_world_size()
 
@@ -190,10 +190,9 @@ def main():
     if n_gpu == 1:
         train_sampler = RandomSampler(train_dataset)
         val_sampler = SequentialSampler(val_dataset)
-        args.train_batch_size = args.batch_size
     else:
-        train_sampler = DistributedSampler(train_dataset, num_replicas=n_gpu, rank=args.rank)
-        val_sampler = DistributedSampler(val_dataset, shuffle=False, num_replicas=n_gpu, rank=args.rank)
+        train_sampler = DistributedSampler(train_dataset, num_replicas=n_gpu, rank=args.local_rank)
+        val_sampler = DistributedSampler(val_dataset, shuffle=False, num_replicas=n_gpu, rank=args.local_rank)
     train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.batch_size, num_workers=1, pin_memory=True)
     val_dataloader = DataLoader(val_dataset, sampler=val_sampler, batch_size=args.batch_size, num_workers=1, pin_memory=True)
 
@@ -202,12 +201,12 @@ def main():
     for epoch in trange(int(args.num_train_epochs), desc="Epoch"):
         for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration")):
             batch[0] = tokenizer(list(batch[0]), padding=True, return_tensors='pt')
-            batch = tuple(t.to(device, non_blocking=True) for t in batch)
+            batch = tuple(t.to(device) for t in batch)
             tokenized, visual_feats, visual_pos, labels = batch
             
             if args.fp16:
                 with autocast():
-                    outputs = model(visual_feats=visual_feats.float(), visual_pos=visual_pos.float(), labels=labels.float(), **tokenized)
+                    outputs = model(visual_feats=visual_feats, visual_pos=visual_pos, labels=labels, **tokenized)
                     loss = outputs[0]
             else:
                 outputs = model(visual_feats=visual_feats.float(), visual_pos=visual_pos.float(), labels=labels.float(), **tokenized)
