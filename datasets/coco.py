@@ -1,7 +1,10 @@
 import numpy as np
 import os
 import random
+
+import torch
 import torch.utils.data as data
+from transformers.models.lxmert.tokenization_lxmert_fast import LxmertTokenizerFast
 
 
 def get_paths(path, use_restval=False):
@@ -175,6 +178,8 @@ class CoCoDataset(data.Dataset):
         
         # Keeps track of whether the dataset is for evaluation or testing
         self.testing = testing
+        
+        self.tokenizer = LxmertTokenizerFast.from_pretrained("unc-nlp/lxmert-base-uncased")
     
     @staticmethod
     def _load_image_features(root, image_id):
@@ -264,14 +269,24 @@ class CoCoDataset(data.Dataset):
         caption = coco.anns[ann_id]['caption']
         img_id = coco.anns[ann_id]['image_id']
         visual_feats, visual_pos = self._load_image_features(root, img_id)
-        aligned = 1
+        aligned = 1.0
         
         # Randomly unalign pairing with probability of prob_unaligned
         if random.random() < self.prob_unaligned:
             visual_feats, visual_pos = self._load_unaligned_features(img_id)
-            aligned = 0
+            aligned = 0.0
             
-        return caption, visual_feats, visual_pos, index if self.testing else aligned
+        outputs = self.tokenizer(caption, truncation=True, padding=True)
+        outputs = {key: torch.tensor(value) for key, value in outputs.items()}
+        outputs['visual_feats'] = torch.tensor(visual_feats)
+        outputs['visual_pos'] = torch.tensor(visual_pos)
+        
+        if self.testing:
+            outputs['index'] = torch.tensor(index)
+        else:
+            outputs['labels'] = torch.tensor(aligned)
+            
+        return outputs
     
     def __len__(self):
         """
