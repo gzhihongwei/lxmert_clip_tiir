@@ -28,8 +28,8 @@ class RetrievalDataset(Dataset):
 
         """
         super(RetrievalDataset, self).__init__()
-        caption_file = os.path.join(args.data_path, '{}_captions.pt'.format(split))
-        img_file = os.path.join(args.data_path, '{}_img_frcnn_feats'.format(split))
+        caption_file = os.path.join(args.data_path, split, '{}_captions.pt'.format(split))
+        img_file = os.path.join(args.data_path, split, '{}_img_frcnn_feats.pt'.format(split))
         self.img_feats = torch.load(img_file)
         self.captions = torch.load(caption_file)
         self.img_keys = list(self.captions.keys())  # img_id as int
@@ -91,10 +91,9 @@ class RetrievalDataset(Dataset):
         return 1 if self.img_keys[img_idx] == cap_idx[0] else 0
 
     def tensorize_text(self, text_a, text_b=None):
-        tokens_a = self.tokenizer.tokenize(text_a, padding=True, truncation=True, return_tensors='pt')
-        tokens_b = self.tokenizer.tokenize(text_b, padding=True, truncation=True, return_tensors='pt')
+        tokens_a = self.tokenizer(text_a, padding='max_length', return_tensors='pt')
+        tokens_a = {k: v.squeeze(0) for k,v in tokens_a.items()}
         return tokens_a
-        
 
     def __getitem__(self, index):
         outputs = {}
@@ -144,8 +143,7 @@ class RetrievalDataset(Dataset):
         return outputs
 
     def get_image(self, image_id):
-        image_idx = self.image_id2idx[str(image_id)]
-        return self.img_feats[image_idx]
+        return self.img_feats[str(image_id)]
 
     def __len__(self):
         if not self.is_train and self.args.cross_image_eval:
