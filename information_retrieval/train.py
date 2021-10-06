@@ -2,13 +2,12 @@ import logging
 import os
 import sys
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Union, Optional
 
 from transformers.models.lxmert.tokenization_lxmert_fast import LxmertTokenizerFast
 
-from datasets.coco import get_test_dataset, get_train_dataset
-from information_retrieval.lxmert import LxmertForIR
-from information_retrieval.coco_ir import RetrievalDataset
+from lxmert import LxmertForIR
+from coco_ir import RetrievalDataset
 
 import numpy as np
 import torch
@@ -21,8 +20,8 @@ from transformers import (
     Trainer,
     TrainingArguments
 )
-from transformers.trainer_pt_utils import nested_concat, nested_numpify, nested_truncate, denumpify_detensorize
-from transformers.trainer_utils import get_last_checkpoint, EvalLoopOutput
+from transformers.trainer_pt_utils import nested_concat, nested_numpify, nested_truncate
+from transformers.trainer_utils import denumpify_detensorize, get_last_checkpoint, EvalLoopOutput
 
 
 logger = logging.getLogger(__name__)
@@ -93,7 +92,7 @@ class LxmertForIRTrainer(Trainer):
                         description: str, 
                         prediction_loss_only: Optional[bool] = None, 
                         ignore_keys: Optional[List[str]] = None, 
-                        metric_key_prefix: str = 'eval') -> :
+                        metric_key_prefix: str = 'eval') -> EvalLoopOutput:
         self.model.eval()
         
         logger.info(f"***** Running {description} *****")
@@ -173,6 +172,13 @@ class LxmertForIRTrainer(Trainer):
                 t2i_ranks.append(rank)
         return i2t_ranks, t2i_ranks
             
+    def training_step(self, model: torch.nn.Module, inputs: Dict[str, Union[torch.Tensor, any]]) -> torch.Tensor:
+        print("In training step")
+        print(inputs["captions"])
+        textual_data = self.tokenizer(inputs.pop("captions"), padding=True, return_tensors="pt")
+        print(textual_data)
+        inputs.update(textual_data)
+        return super().training_step(model, inputs)
 
 def main():
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
@@ -188,8 +194,8 @@ def main():
     
     # Log on each process the small summary:
     logger.warning(
-        f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}"
-        + f"distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
+        f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu} "
+        f"distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
     )
     logger.info(f"Training/evaluation parameters {training_args}")
     

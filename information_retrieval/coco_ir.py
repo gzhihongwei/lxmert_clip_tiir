@@ -88,12 +88,12 @@ class RetrievalDataset(Dataset):
 
     def get_label(self, index):
         img_idx, cap_idx = self.get_image_caption_index(index)
-        return 1 if self.img_keys[img_idx] == cap_idx[0] else 0
+        return 1.0 if self.img_keys[img_idx] == cap_idx[0] else 0.0
 
-    def tensorize_text(self, text_a, text_b=None):
-        tokens_a = self.tokenizer(text_a, padding='max_length', return_tensors='pt')
-        tokens_a = {k: v.squeeze(0) for k,v in tokens_a.items()}
-        return tokens_a
+   # def tensorize_text(self, text_a, text_b=None):
+   #     tokens_a = self.tokenizer(text_a, padding='max_length', return_tensors='pt')
+   #     tokens_a = {k: v.squeeze(0) for k,v in tokens_a.items()}
+   #     return tokens_a
 
     def __getitem__(self, index):
         outputs = {}
@@ -102,43 +102,43 @@ class RetrievalDataset(Dataset):
             img_key = self.img_keys[img_idx]
             features = self.get_image(img_key)
             caption = self.captions[cap_idxs[0]][cap_idxs[1]]
-            example = self.tensorize_text(caption)
+            #example = self.tensorize_text(caption)
 
             # select a negative pair
             neg_img_indexs = list(range(0, img_idx)) + list(range(img_idx + 1, len(self.img_keys)))
             img_idx_neg = random.choice(neg_img_indexs)
             
-            label = 1
+            label = 1.0
             
             if random.random() <= self.prob_unaligned:
                 # When to create an unaligned pair during training
                 
-                label = 0
+                label = 0.0
                 
                 if random.random() <= 0.5:
                     # randomly select a negative caption from a different image.
                     cap_idx_neg = random.randint(0, self.num_captions_per_img - 1)
                     caption_neg = self.captions[self.img_keys[img_idx_neg]][cap_idx_neg]
-                    example = self.tensorize_text(caption_neg)
+                    caption = caption_neg
+                    #example = self.tensorize_text(caption_neg)
                 else:
                     # randomly select a negative image 
                     features = self.get_image(self.img_keys[img_idx_neg])
 
             outputs['labels'] = label
             outputs.update(features)
-            outputs.update(example)
+            outputs['captions'] = caption
             
         else:
             img_idx, cap_idxs = self.get_image_caption_index(index)
             img_key = self.img_keys[img_idx]
             features = self.get_image(img_key)
-            captions = self.captions[cap_idxs[0]][cap_idxs[1]]
-            tokenized = self.tensorize_text(captions)
-            label = 1 if img_key == cap_idxs[0] else 0
+            caption = self.captions[cap_idxs[0]][cap_idxs[1]]
+            label = 1.0 if img_key == cap_idxs[0] else 0.0
             outputs['index'] = index
             outputs['labels'] = label
             outputs.update(features)
-            outputs.update(tokenized)
+            outputs['captions'] = caption
             
         return outputs
 
