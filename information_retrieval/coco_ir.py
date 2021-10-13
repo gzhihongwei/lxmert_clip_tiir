@@ -128,7 +128,6 @@ class RetrievalDataset(Dataset):
             outputs['labels'] = label
             outputs.update(features)
             outputs.update(example)
-            #outputs['captions'] = caption
             
         else:
             img_idx, cap_idxs = self.get_image_caption_index(index)
@@ -141,7 +140,6 @@ class RetrievalDataset(Dataset):
             outputs['labels'] = label
             outputs.update(features)
             outputs.update(example)
-            #outputs['captions'] = caption
             
         return outputs
 
