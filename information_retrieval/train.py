@@ -22,7 +22,7 @@ from transformers import (
     TrainingArguments
 )
 from transformers.trainer_pt_utils import nested_concat, nested_numpify, nested_truncate
-from transformers.trainer_utils import denumpify_detensorize, get_last_checkpoint, EvalLoopOutput
+from transformers.trainer_utils import denumpify_detensorize, get_last_checkpoint, EvalLoopOutput, EvalPrediction
 
 
 logger = logging.getLogger(__name__)
@@ -199,8 +199,8 @@ def compute_ranks(labels: np.ndarray, logits: np.ndarray, num_captions_per_img: 
     return i2t_ranks, t2i_ranks
 
     
-def compute_metrics_maker(num_captions_per_img: int) -> Callable[transformers.trainer_utils.EvalPrediction, Dict]:
-    def _compute_metrics(predictions: transformers.trainer_utils.EvalPrediction):
+def compute_metrics_maker(num_captions_per_img: int) -> Callable[[EvalPrediction], Dict]:
+    def _compute_metrics(predictions: EvalPrediction) -> Dict:
         i2t_ranks, t2i_ranks = compute_ranks(predictions.label_ids, predictions.predictions, num_captions_per_img)
         
         rank = [1, 5, 10]
@@ -232,7 +232,7 @@ def main():
     # Log on each process the small summary:
     logger.warning(
         f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu} "
-        f"distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
+        f"distributed: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
     )
     logger.info(f"Training/evaluation parameters {training_args}")
     
