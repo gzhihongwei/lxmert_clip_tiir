@@ -90,10 +90,10 @@ class RetrievalDataset(Dataset):
         img_idx, cap_idx = self.get_image_caption_index(index)
         return 1.0 if self.img_keys[img_idx] == cap_idx[0] else 0.0
 
-   # def tensorize_text(self, text_a, text_b=None):
-   #     tokens_a = self.tokenizer(text_a, padding='max_length', return_tensors='pt')
-   #     tokens_a = {k: v.squeeze(0) for k,v in tokens_a.items()}
-   #     return tokens_a
+    def prepare_captions(self, text_a, text_b=None):
+       tokens_a = self.tokenizer(text_a, return_tensors='pt')
+       tokens_a = {k: v.squeeze(0) for k,v in tokens_a.items()}
+       return tokens_a
 
     def __getitem__(self, index):
         outputs = {}
@@ -102,7 +102,7 @@ class RetrievalDataset(Dataset):
             img_key = self.img_keys[img_idx]
             features = self.get_image(img_key)
             caption = self.captions[cap_idxs[0]][cap_idxs[1]]
-            #example = self.tensorize_text(caption)
+            example = self.prepare_captions(caption)
 
             # select a negative pair
             neg_img_indexs = list(range(0, img_idx)) + list(range(img_idx + 1, len(self.img_keys)))
@@ -119,26 +119,29 @@ class RetrievalDataset(Dataset):
                     # randomly select a negative caption from a different image.
                     cap_idx_neg = random.randint(0, self.num_captions_per_img - 1)
                     caption_neg = self.captions[self.img_keys[img_idx_neg]][cap_idx_neg]
-                    caption = caption_neg
-                    #example = self.tensorize_text(caption_neg)
+                    #caption = caption_neg
+                    example = self.prepare_captions(caption_neg)
                 else:
                     # randomly select a negative image 
                     features = self.get_image(self.img_keys[img_idx_neg])
 
             outputs['labels'] = label
             outputs.update(features)
-            outputs['captions'] = caption
+            outputs.update(example)
+            #outputs['captions'] = caption
             
         else:
             img_idx, cap_idxs = self.get_image_caption_index(index)
             img_key = self.img_keys[img_idx]
             features = self.get_image(img_key)
             caption = self.captions[cap_idxs[0]][cap_idxs[1]]
+            example = self.prepare_captions(caption)
             label = 1.0 if img_key == cap_idxs[0] else 0.0
             outputs['index'] = index
             outputs['labels'] = label
             outputs.update(features)
-            outputs['captions'] = caption
+            outputs.update(example)
+            #outputs['captions'] = caption
             
         return outputs
 
