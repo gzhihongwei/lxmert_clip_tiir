@@ -4,6 +4,7 @@ import sys
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Union, Optional
 
+from tqdm import tqdm
 from transformers.models.lxmert.tokenization_lxmert_fast import LxmertTokenizerFast
 
 from lxmert import LxmertForIR
@@ -93,6 +94,7 @@ class LxmertForIRTrainer(Trainer):
                         prediction_loss_only: Optional[bool] = None, 
                         ignore_keys: Optional[List[str]] = None, 
                         metric_key_prefix: str = 'eval') -> EvalLoopOutput:
+        # TODO: Maybe change to compute_metrics?
         self.model.eval()
         
         logger.info(f"***** Running {description} *****")
@@ -101,9 +103,11 @@ class LxmertForIRTrainer(Trainer):
         
         results = {}
         all_labels = None
-        for inputs in dataloader:
+        labels_host = None
+        for inputs in tqdm(dataloader):
             indices = inputs.pop('index')
-            labels = inputs['labels']
+            loss, logits, labels = self.prediction_step(self.model, inputs, False, ignore_keys=ignore_keys)
+
             labels = self._pad_across_processes(labels)
             labels = self._nested_gather(labels)
             labels_host = labels if labels_host is None else nested_concat(labels_host, labels, padding_index=-100)
@@ -113,10 +117,7 @@ class LxmertForIRTrainer(Trainer):
             )
             all_labels = nested_truncate(all_labels, len(dataloader))
 
-            with torch.no_grad():
-                _, results = self.model(**inputs)[:2]
-                results = [result.to(torch.device("cpu")) for result in results]
-                results.update({idx.item(): res.item() for idx, res in zip(indices, results)})
+            results.update({idx.item(): log.item() for idx, log in zip(indices, logits)})
                 
         metrics = LxmertForIRTrainer._evaluate(dataloader.dataset, results)
         predictions = (metrics.pop("i2t_ranks"), metrics.pop("t2i_ranks"))
@@ -172,13 +173,6 @@ class LxmertForIRTrainer(Trainer):
                 t2i_ranks.append(rank)
         return i2t_ranks, t2i_ranks
             
-    def training_step(self, model: torch.nn.Module, inputs: Dict[str, Union[torch.Tensor, any]]) -> torch.Tensor:
-        print("In training step")
-        print(inputs["captions"])
-        textual_data = self.tokenizer(inputs.pop("captions"), padding=True, return_tensors="pt")
-        print(textual_data)
-        inputs.update(textual_data)
-        return super().training_step(model, inputs)
 
 def main():
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
@@ -240,9 +234,9 @@ def main():
     
     model.resize_token_embeddings(len(tokenizer))
     
-    train_dataset = RetrievalDataset(tokenizer, data_args, 'train', is_train=True)
-    val_dataset = RetrievalDataset(tokenizer, data_args, 'minival' if data_args.evaluate_during_training else 'val', is_train=False)
-    test_dataset = RetrievalDataset(tokenizer, data_args, 'test', is_train=False)
+    train_dataset = RetrievalDataset(tokenizer, data_args, 'train', is_train=True) if training_args.do_train else None
+    val_dataset = RetrievalDataset(tokenizer, data_args, 'minival' if data_args.evaluate_during_training else 'val', is_train=False) if training_args.do_eval else None
+    test_dataset = RetrievalDataset(tokenizer, data_args, 'test', is_train=False) if training_args.do_predict else None
     
     if not training_args.do_train and not (training_args.do_eval or training_args.do_predict):
         logger.info("There is nothing to do. Please pass `do_train`, `do_eval` and/or `do_predict`.")
