@@ -201,7 +201,10 @@ def compute_ranks(labels: np.ndarray, logits: np.ndarray, num_captions_per_img: 
     
 def compute_metrics_maker(num_captions_per_img: int) -> Callable[[EvalPrediction], Dict]:
     def _compute_metrics(predictions: EvalPrediction) -> Dict:
-        i2t_ranks, t2i_ranks = compute_ranks(predictions.label_ids, predictions.predictions, num_captions_per_img)
+        sorted_indices = predictions.label_ids[0].argsort()
+        labels = predictions.label_ids[1][sorted_indices]
+        results = predictions.predictions[sorted_indices]
+        i2t_ranks, t2i_ranks = compute_ranks(labels, results, num_captions_per_img)
         
         rank = [1, 5, 10]
         
