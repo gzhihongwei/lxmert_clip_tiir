@@ -6,6 +6,16 @@ from typing import Optional, Tuple
 
 from transformers import LxmertModel, LxmertPreTrainedModel
 from transformers.file_utils import ModelOutput
+from transformers.models.lxmert.configuration_lxmert import LxmertConfig
+
+from coco_ir import ContrastiveLoss
+
+
+class LxmertForIRConfig(LxmertConfig):
+    def __init__(self, margin=0.2, max_violation=True, **kwargs):
+        self.margin = margin
+        self.max_violation = max_violation
+        super().__init__(**kwargs)
 
 
 @dataclass
@@ -63,7 +73,7 @@ class LxmertIRHead(nn.Module):
         return self.logit_fc(hidden_states)
 
 
-class LxmertForIR(LxmertPreTrainedModel):
+class LxmertForIRBCE(LxmertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         # Configuration
@@ -129,3 +139,62 @@ class LxmertForIR(LxmertPreTrainedModel):
             cross_encoder_attentions=lxmert_output.cross_encoder_attentions,
         )
         
+
+class LxmertForIRContrastive(LxmertForIRBCE):
+    def __init__(self, config):
+        super().__init__(config)
+        # Instead of BCE, use the contrastive loss as defined in `coco_ir.py`
+        self.loss = ContrastiveLoss(margin=self.config.margin, max_violation=self.config.max_violation)
+        
+    def forward(
+        self,
+        input_ids=None,
+        visual_feats=None,
+        visual_pos=None,
+        attention_mask=None,
+        token_type_ids=None,
+        visual_attention_mask=None,
+        inputs_embeds=None,
+        labels=None,
+        output_attentions=None,
+        output_hidden_states=None,
+        return_dict=None,
+    ):
+        lxmert_output = self.lxmert(
+            input_ids=input_ids,
+            visual_feats=visual_feats,
+            visual_pos=visual_pos,
+            token_type_ids=token_type_ids,
+            attention_mask=attention_mask,
+            visual_attention_mask=visual_attention_mask,
+            inputs_embeds=inputs_embeds,
+            output_hidden_states=output_hidden_states,
+            output_attentions=output_attentions,
+            return_dict=return_dict,
+        )
+
+        pooled_output = lxmert_output[2]
+        matching_score = self.match_head(pooled_output)
+        loss = None
+        if labels is not None:
+            loss = self.loss(self,
+                             input_ids=input_ids,
+                             visual_feats=visual_feats,
+                             visual_pos=visual_pos,
+                             token_type_ids=token_type_ids,
+                             attention_mask=attention_mask,
+                             visual_attention_mask=visual_attention_mask)
+
+        if not return_dict:
+            output = (matching_score,) + lxmert_output[3:]
+            return (loss,) + output if loss is not None else output
+
+        return LxmertForIROutput(
+            loss=loss,
+            matching_score=matching_score, 
+            language_hidden_states=lxmert_output.language_hidden_states,
+            vision_hidden_states=lxmert_output.vision_hidden_states,
+            language_attentions=lxmert_output.language_attentions,
+            vision_attentions=lxmert_output.vision_attentions,
+            cross_encoder_attentions=lxmert_output.cross_encoder_attentions,
+        )
