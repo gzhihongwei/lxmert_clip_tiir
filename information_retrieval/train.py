@@ -1,17 +1,17 @@
 import logging
 import os
 import sys
+
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, Union, Optional
+from typing import Callable, Dict, List, Tuple, Optional
+
+import numpy as np
+import transformers
 
 from tqdm import tqdm
-from transformers.models.lxmert.tokenization_lxmert_fast import LxmertTokenizerFast
 
 from lxmert import LxmertForIR
 from coco_ir import RetrievalDataset
-
-import numpy as np
-import torch
 
 from transformers import (
     AutoConfig,
@@ -22,7 +22,7 @@ from transformers import (
     TrainingArguments
 )
 from transformers.trainer_pt_utils import nested_concat, nested_numpify, nested_truncate
-from transformers.trainer_utils import denumpify_detensorize, get_last_checkpoint, EvalLoopOutput
+from transformers.trainer_utils import denumpify_detensorize, get_last_checkpoint, EvalLoopOutput, EvalPrediction
 
 
 logger = logging.getLogger(__name__)
@@ -86,93 +86,52 @@ class DataTrainingArguments:
         metadata={"help": "Run evaluation during training at each save_steps."}
     )
     
-
-class LxmertForIRTrainer(Trainer):
-    def evaluation_loop(self, 
-                        dataloader: torch.utils.data.dataloader.DataLoader, 
-                        description: str, 
-                        prediction_loss_only: Optional[bool] = None, 
-                        ignore_keys: Optional[List[str]] = None, 
-                        metric_key_prefix: str = 'eval') -> EvalLoopOutput:
-        # TODO: Maybe change to compute_metrics?
-        self.model.eval()
-        
-        logger.info(f"***** Running {description} *****")
-        logger.info(f"  Num examples = {len(dataloader)}")
-        logger.info(f"  Batch size = {dataloader.batch_size}")
-        
-        results = {}
-        all_labels = None
-        labels_host = None
-        for inputs in tqdm(dataloader):
-            indices = inputs.pop('index')
-            loss, logits, labels = self.prediction_step(self.model, inputs, False, ignore_keys=ignore_keys)
-
-            labels = self._pad_across_processes(labels)
-            labels = self._nested_gather(labels)
-            labels_host = labels if labels_host is None else nested_concat(labels_host, labels, padding_index=-100)
-            labels = nested_numpify(labels_host)
-            all_labels = (
-                labels if all_labels is None else nested_concat(all_labels, labels, padding_index=-100)
-            )
-            all_labels = nested_truncate(all_labels, len(dataloader))
-
-            results.update({idx.item(): log.item() for idx, log in zip(indices, logits)})
-                
-        metrics = LxmertForIRTrainer._evaluate(dataloader.dataset, results)
-        predictions = (metrics.pop("i2t_ranks"), metrics.pop("t2i_ranks"))
-        all_labels = denumpify_detensorize(all_labels)
-        
-        for key in list(metrics.keys()):
-            if not key.startswith(f"{metric_key_prefix}_"):
-                metrics[f"{metric_key_prefix}_{key}"] = metrics.pop(key)
-        return EvalLoopOutput(predictions=predictions, label_ids=all_labels, metrics=metrics, num_samples=len(dataloader))
     
-    @staticmethod
-    def _evaluate(dataset: torch.utils.data.Dataset, test_results: Dict[int, float]) -> Dict[str, Dict[str, float]]:
-        i2t_ranks, t2i_ranks = LxmertForIRTrainer._compute_ranks(dataset, test_results)
+def compute_ranks(labels: np.ndarray, logits: np.ndarray, num_captions_per_img: int) -> Tuple[List[int], List[int]]:
+    labels = labels.reshape(-1, num_captions_per_img)
+    logits = logits.reshape(-1, num_captions_per_img)
+    i2t_ranks, t2i_ranks = [], []
+    for lab, sim in zip(labels, logits):
+        inds = (-sim).argsort()
+        rank = num_captions_per_img
+        for r, ind in enumerate(inds):
+            if lab[ind] == 1:
+                rank = r
+                break
+        i2t_ranks.append(rank)
+    labels = labels.swapaxes(0, 1)
+    logits = logits.swapaxes(0, 1)
+    for lab, sim in zip(labels, logits):
+        inds = (-sim).argsort()
+        rank = num_captions_per_img
+        for r, ind in enumerate(inds):
+            if lab[ind] == 1:
+                rank = r
+                break
+        t2i_ranks.append(rank)
+    return i2t_ranks, t2i_ranks
+
+    
+def compute_metrics_maker(num_captions_per_img: int) -> Callable[[EvalPrediction], Dict]:
+    def _compute_metrics(predictions: EvalPrediction) -> Dict:
+        i2t_ranks, t2i_ranks = compute_ranks(predictions.label_ids, predictions.predictions, num_captions_per_img)
+        
         rank = [1, 5, 10]
+        
         i2t_accs = [sum([_ < r for _ in i2t_ranks]) / len(i2t_ranks) for r in rank]
-        eval_result = {"i2t_retrieval": {"R@1": i2t_accs[0], "R@5": i2t_accs[1], "R@10": i2t_accs[2]}}
-        eval_result["i2t_ranks"] = np.array(i2t_ranks)
-        if t2i_ranks:
-            t2i_accs = [sum([_ < r for _ in t2i_ranks]) / len(t2i_ranks) for r in rank]
-            eval_result["t2i_retrieval"] = {"R@1": t2i_accs[0], "R@5": t2i_accs[1], "R@10": t2i_accs[2]}
-            eval_result["t2i_ranks"] = np.array(t2i_ranks)
+        eval_result = {"i2t_R@1": i2t_accs[0], "i2t_R@5": i2t_accs[1], "i2t_R@10": i2t_accs[2]}
+        
+        t2i_accs = [sum([_ < r for _ in t2i_ranks]) / len(t2i_ranks) for r in rank]
+        eval_result["t2i_R@1"] = t2i_accs[0]
+        eval_result["t2i_R@5"] = t2i_accs[1]
+        eval_result["t2i_R@10"] = t2i_accs[2]
+        
+        eval_result["rsum"] = sum(eval_result.values())
+        
         return eval_result
     
-    @staticmethod
-    def _compute_ranks(dataset: torch.utils.data.Dataset, results: Dict[int, float]) -> Tuple[List[int], Optional[List[int]]]:
-        labels = np.array([dataset.get_label(i) for i in range(len(dataset))])
-        similarities = np.array([results[i] for i in range(len(dataset))])
-        if dataset.has_caption_indexs:
-            num_captions_per_img = dataset.num_captions_per_img
-        else:
-            num_captions_per_img = len(dataset.img_keys) * dataset.num_captions_per_img
-        labels = np.reshape(labels, (-1, num_captions_per_img))
-        similarities = np.reshape(similarities, (-1, num_captions_per_img))
-        i2t_ranks, t2i_ranks = [], []
-        for lab, sim in zip(labels, similarities):
-            inds = (-sim).argsort()
-            rank = num_captions_per_img
-            for r, ind in enumerate(inds):
-                if lab[ind] == 1:
-                    rank = r
-                    break
-            i2t_ranks.append(rank)
-        if not dataset.has_caption_indexs:
-            labels = np.swapaxes(labels, 0, 1)
-            similarities = np.swapaxes(similarities, 0, 1)
-            for lab, sim in zip(labels, similarities):
-                inds = (-sim).argsort()
-                rank = num_captions_per_img
-                for r, ind in enumerate(inds):
-                    if lab[ind] == 1:
-                        rank = r
-                        break
-                t2i_ranks.append(rank)
-        return i2t_ranks, t2i_ranks
-            
+    return _compute_metrics
+
 
 def main():
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
@@ -189,7 +148,7 @@ def main():
     # Log on each process the small summary:
     logger.warning(
         f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu} "
-        f"distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
+        f"distributed: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
     )
     logger.info(f"Training/evaluation parameters {training_args}")
     
@@ -242,14 +201,21 @@ def main():
         logger.info("There is nothing to do. Please pass `do_train`, `do_eval` and/or `do_predict`.")
         return
     
+    compute_metrics = None
+    
+    if training_args.do_eval or training_args.do_predict:
+        num_captions_per_img = len(val_dataset) / len(val_dataset.img_keys) if training_args.do_eval else len(test_dataset) / len(test_dataset.img_keys)
+        num_captions_per_img = int(num_captions_per_img)
+        compute_metrics = compute_metrics_maker(num_captions_per_img)
+    
     # Initialize our Trainer
-    trainer = LxmertForIRTrainer(
+    trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
         eval_dataset=val_dataset if training_args.do_eval else test_dataset if training_args.do_predict else None,
         tokenizer=tokenizer,
-        # compute_metrics=compute_metrics if training_args.predict_with_generate else None,
+        compute_metrics=compute_metrics,
     )
     
     # Training
