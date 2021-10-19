@@ -163,8 +163,47 @@ class ContrastiveLoss(nn.Module):
         super(ContrastiveLoss, self).__init__()
         self.margin = margin
         self.max_violation = max_violation
+        
+    def _create_similarity_scores(self,
+                                  model: torch.nn.Module, 
+                                  input_ids=None,
+                                  visual_feats=None,
+                                  visual_pos=None,
+                                  attention_mask=None,
+                                  token_type_ids=None,
+                                  visual_attention_mask=None) -> torch.tensor:
+        all_scores = None
+        
+        for vis_feat, vis_pos, vis_attn_mask in zip(visual_feats, visual_pos, visual_attention_mask):
+            vis_feat = vis_feat.expand(input_ids.size(0), *vis_feat.shape)
+            vis_pos = vis_pos.exapnd(input_ids.size(0), *vis_pos.shape)
+            vis_attn_mask = vis_attn_mask.expand(input_ids.size(0), *vis_attn_mask.shape)
+            scores = model(input_ids=input_ids,
+                           visual_feats=vis_feat,
+                           visual_pos=vis_pos,
+                           attention_mask=attention_mask,
+                           token_type_ids=token_type_ids,
+                           visual_attention_mask=vis_attn_mask)
+            all_scores = scores if not all_scores else torch.cat((all_scores, scores))
+        
+        return all_scores
+            
 
-    def forward(self, scores: torch.tensor) -> torch.tensor:
+    def forward(self,
+                model: torch.nn.Module, 
+                input_ids=None,
+                visual_feats=None,
+                visual_pos=None,
+                attention_mask=None,
+                token_type_ids=None,
+                visual_attention_mask=None) -> torch.tensor:
+        scores = self._create_similarity_scores(model,
+                                                input_ids=input_ids,
+                                                visual_feats=visual_feats,
+                                                visual_pos=visual_pos,
+                                                attention_mask=attention_mask,
+                                                token_type_ids=token_type_ids,
+                                                visual_attention_mask=visual_attention_mask)
         diagonal = scores.diag().view(scores.size(0), 1)
         d1 = diagonal.expand_as(scores)
         d2 = diagonal.t().expand_as(scores)
