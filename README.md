@@ -1,2 +1,3 @@
-# deep_tbir
-A repository focused in deep text-based image retrieval. For now, it is fine tuning LXMERT for the text-based image retrieval task.
+# lxmert_tiir_img-cap
+A repository focused in deep text-image retrieval and image captioning. For now, it is fine tuning LXMERT on these tasks.
+Later on, CLIP might be explored.
