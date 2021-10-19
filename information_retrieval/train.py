@@ -7,14 +7,13 @@ from typing import Dict, List, Tuple, Union, Optional
 from tqdm import tqdm
 from transformers.models.lxmert.tokenization_lxmert_fast import LxmertTokenizerFast
 
-from lxmert import LxmertForIR
+from lxmert import LxmertForIRConfig, LxmertForIRContrastive
 from coco_ir import RetrievalDataset
 
 import numpy as np
 import torch
 
 from transformers import (
-    AutoConfig,
     AutoTokenizer,
     HfArgumentParser,
     set_seed,
@@ -51,6 +50,15 @@ class ModelArguments:
         default=True,
         metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
     )
+    margin: Optional[float] = field(
+        default=0.2,
+        metadata={"help": "Margin used in the contrastive loss."}
+    )
+    max_violation: Optional[bool] = field(
+        default=True,
+        metadata={"help": "Whether to use the maximum in batch negative violation as the loss."}
+    )
+    
 
 
 @dataclass
@@ -216,17 +224,19 @@ def main():
     # Distributed training:
     # The .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
-    config = AutoConfig.from_pretrained(
+    config = LxmertForIRConfig.from_pretrained(
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
-        num_labels=1
+        num_labels=1,
+        margin=model_args.margin,
+        max_violation=model_args.max_violation,
     )
     tokenizer = AutoTokenizer.from_pretrained(
         model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
         use_fast=model_args.use_fast_tokenizer,
     )
-    model = LxmertForIR.from_pretrained(
+    model = LxmertForIRContrastive.from_pretrained(
         model_args.model_name_or_path,
         config=config,
         cache_dir=model_args.cache_dir,
