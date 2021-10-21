@@ -1,64 +1,12 @@
-import torch
 import torch.nn as nn
 
-from dataclasses import dataclass
-from typing import Optional, Tuple
-
 from transformers import LxmertModel, LxmertPreTrainedModel
-from transformers.file_utils import ModelOutput
-from transformers.models.lxmert.configuration_lxmert import LxmertConfig
 
-from coco_ir import ContrastiveLoss
-
-
-class LxmertForIRConfig(LxmertConfig):
-    def __init__(self, margin=0.2, max_violation=True, **kwargs):
-        self.margin = margin
-        self.max_violation = max_violation
-        super().__init__(**kwargs)
-
-
-@dataclass
-class LxmertForIROutput(ModelOutput):
-    """
-    Output type of :class:`LxmertForIR`.
-
-    Args:
-        loss (`optional`, returned when ``labels`` is provided, ``torch.FloatTensor`` of shape :obj:`(1,)`):
-            Total loss as the sum of the masked language modeling loss and the next sequence prediction
-            (classification) loss.k.
-        matching_score: (:obj:`torch.FloatTensor` of shape :obj:`(batch_size,)`, `optional`):
-            Scores of image-text matching objective (binary classification).
-        language_hidden_states (:obj:`tuple(torch.FloatTensor)`, `optional`, returned when ``output_hidden_states=True`` is passed or when ``config.output_hidden_states=True``):
-            Tuple of :obj:`torch.FloatTensor` (one for input features + one for the output of each cross-modality
-            layer) of shape :obj:`(batch_size, sequence_length, hidden_size)`.
-        vision_hidden_states (:obj:`tuple(torch.FloatTensor)`, `optional`, returned when ``output_hidden_states=True`` is passed or when ``config.output_hidden_states=True``):
-            Tuple of :obj:`torch.FloatTensor` (one for input features + one for the output of each cross-modality
-            layer) of shape :obj:`(batch_size, sequence_length, hidden_size)`.
-        language_attentions (:obj:`tuple(torch.FloatTensor)`, `optional`, returned when ``output_attentions=True`` is passed or when ``config.output_attentions=True``):
-            Tuple of :obj:`torch.FloatTensor` (one for each layer) of shape :obj:`(batch_size, num_heads,
-            sequence_length, sequence_length)`. Attentions weights after the attention softmax, used to compute the
-            weighted average in the self-attention heads.
-        vision_attentions (:obj:`tuple(torch.FloatTensor)`, `optional`, returned when ``output_attentions=True`` is passed or when ``config.output_attentions=True``):
-            Tuple of :obj:`torch.FloatTensor` (one for each layer) of shape :obj:`(batch_size, num_heads,
-            sequence_length, sequence_length)`. Attentions weights after the attention softmax, used to compute the
-            weighted average in the self-attention heads.
-        cross_encoder_attentions (:obj:`tuple(torch.FloatTensor)`, `optional`, returned when ``output_attentions=True`` is passed or when ``config.output_attentions=True``):
-            Tuple of :obj:`torch.FloatTensor` (one for each layer) of shape :obj:`(batch_size, num_heads,
-            sequence_length, sequence_length)`. Attentions weights after the attention softmax, used to compute the
-            weighted average in the self-attention heads.
-    """
-
-    loss: Optional[torch.FloatTensor] = None
-    matching_score: Optional[torch.FloatTensor] = None
-    language_hidden_states: Optional[Tuple[torch.FloatTensor]] = None
-    vision_hidden_states: Optional[Tuple[torch.FloatTensor]] = None
-    language_attentions: Optional[Tuple[torch.FloatTensor]] = None
-    vision_attentions: Optional[Tuple[torch.FloatTensor]] = None
-    cross_encoder_attentions: Optional[Tuple[torch.FloatTensor]] = None
+from information_retrieval.coco_ir import ContrastiveLoss
+from information_retrieval.utils import LxmertForIROutput
     
 
-class LxmertIRHead(nn.Module):
+class LxmertIRMatchingHead(nn.Module):
     def __init__(self, config, num_labels):
         super().__init__()
         hid_dim = config.hidden_size
@@ -82,7 +30,7 @@ class LxmertForIRBCE(LxmertPreTrainedModel):
         # Lxmert backbone
         self.lxmert = LxmertModel(config)
         
-        self.match_head = LxmertIRHead(config, self.config.num_labels)
+        self.match_head = LxmertIRMatchingHead(config, self.config.num_labels)
         
         # Weight initialization
         self.init_weights()
@@ -143,6 +91,15 @@ class LxmertForIRBCE(LxmertPreTrainedModel):
 class LxmertForIRContrastive(LxmertForIRBCE):
     def __init__(self, config):
         super().__init__(config)
+        # Configuration
+        self.config = config
+        
+        # Lxmert backbone
+        self.lxmert = LxmertModel(config)
+        
+        # Weight initialization
+        self.init_weights()
+        
         # Instead of BCE, use the contrastive loss as defined in `coco_ir.py`
         self.loss = ContrastiveLoss(margin=self.config.margin, max_violation=self.config.max_violation)
         
@@ -173,17 +130,13 @@ class LxmertForIRContrastive(LxmertForIRBCE):
             return_dict=return_dict,
         )
 
-        pooled_output = lxmert_output[2]
-        matching_score = self.match_head(pooled_output)
+        visual_output = lxmert_output[1]
+        pooled_visual_output = visual_output.mean(dim=1)
+        pooled_textual_output = lxmert_output[2]
+        matching_score = (pooled_visual_output * pooled_textual_output).sum(dim=1)
         loss = None
         if labels is not None:
-            loss = self.loss(self,
-                             input_ids=input_ids,
-                             visual_feats=visual_feats,
-                             visual_pos=visual_pos,
-                             token_type_ids=token_type_ids,
-                             attention_mask=attention_mask,
-                             visual_attention_mask=visual_attention_mask)
+            loss = self.loss(pooled_visual_output.mm(pooled_textual_output.t()))
 
         if not return_dict:
             output = (matching_score,) + lxmert_output[3:]
