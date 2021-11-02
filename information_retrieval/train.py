@@ -3,7 +3,7 @@ import sys
 
 from pathlib import Path
 
-from lxmert import LxmertForIRConfig, LxmertForIRContrastive
+from lxmert import LxmertForIRConfig, LxmertForIRBCE, LxmertForIRContrastive
 from coco_ir import RetrievalDataset
 
 from transformers import (
@@ -39,8 +39,8 @@ def main():
     
     # Log on each process the small summary:
     logger.warning(
-        f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu} "
-        f"distributed: {training_args.local_rank != -1}, 16-bits training: {training_args.fp16}"
+        f"Process rank: {training_args.local_rank}, device: {training_args.device}, "
+        f"distributed: {training_args.local_rank != -1}, mixed precision: {training_args.fp16}"
     )
     logger.info(f"Training/evaluation parameters {training_args}")
     
@@ -79,7 +79,15 @@ def main():
         cache_dir=model_args.cache_dir,
         use_fast=model_args.use_fast_tokenizer,
     )
-    model = LxmertForIRContrastive.from_pretrained(
+
+    if model_args.formulation == "binary":
+        base_model = LxmertForIRBCE
+    elif model_args.formulation == "contrastive":
+        base_model = LxmertForIRContrastive
+    else:
+        raise ValueError("Formulation must either be 'binary' or 'contrastive'")
+
+    model = base_model.from_pretrained(
         model_args.model_name_or_path,
         config=config,
         cache_dir=model_args.cache_dir,
