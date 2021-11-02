@@ -32,9 +32,12 @@ class ModelArguments:
         default=True,
         metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
     )
+    formulation: str = field(
+        metadata={"help": "Which formulation to use for text-image retrieval. Must be one of {'binary', 'contrastive'}"}
+    )
     margin: Optional[float] = field(
         default=0.2,
-        metadata={"help": "Margin used in the contrastive loss."}
+        metadata={"help": "Margin used in the contrastive loss. Define if using contrastive loss."}
     )
     max_violation: Optional[bool] = field(
         default=True,
@@ -54,9 +57,6 @@ class DataTrainingArguments:
     )
     prob_unaligned: float = field(
         metadata={"help": "Probability that the images for each caption are randomly sampled from the negative images."}
-    )
-    n_gpu: int = field(
-        metadata={"help": "Number of GPUs being used for training, evaluation, or prediction."}
     )
     cross_image_eval: Optional[bool] = field(
         default=False,
