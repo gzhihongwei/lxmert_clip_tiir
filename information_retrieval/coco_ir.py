@@ -3,21 +3,30 @@
 from __future__ import absolute_import, division, print_function
 
 import json
-import os
 import random
 
-import numpy as np
+from pathlib import Path
+from typing import Dict, Optional, Tuple, Union
 
+import h5py
+import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset
 
-from tqdm import tqdm
+from torch.utils.data import Dataset
+from transformers.tokenization_utils import PreTrainedTokenizer
+from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
+
+from utils import DataTrainingArguments
 
 
 class RetrievalDataset(Dataset):
     """Image/Text Retrieval Dataset"""
-    def __init__(self, tokenizer, args, split='train', is_train=True):
+    def __init__(self, 
+                 tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
+                 args: DataTrainingArguments,
+                 split: str = 'train',
+                 is_train: bool = True):
         """
         tokenizer: tokenizer to process caption text.
         args: configuration parameters including max_seq_length, etc.
@@ -27,82 +36,62 @@ class RetrievalDataset(Dataset):
              captions per image), labels (list of dictionary or str of all labels),
 
         """
-        super(RetrievalDataset, self).__init__()
-        caption_file = os.path.join(args.data_path, split, '{}_captions.pt'.format(split))
-        img_file = os.path.join(args.data_path, split, '{}_img_frcnn_feats.pt'.format(split))
-        self.img_feats = torch.load(img_file)
+        super().__init__()
+        self.split_path = Path(args.data_path) / split
+        caption_file = self.split_path / f"{split}_captions.pt"
         self.captions = torch.load(caption_file)
         self.img_keys = list(self.captions.keys())  # img_id as int
         if not type(self.captions[self.img_keys[0]]) == list:
             self.captions = {k: json.loads(self.captions[k]) for k in self.img_keys}
 
         # There are 5 captions per image in COCO
-        self.num_captions_per_img = 5
+        self.num_captions_per_img = self.effective_captions_per_img = 5
         
         if not is_train:
             if args.eval_img_keys_file:
                 # select a subset of image keys for evaluation. eg. COCO 1k and 5k
                 # eval_img_keys_file is a list of image keys saved in tsv file
-                with open(os.path.join(args.data_path, args.eval_img_keys_file), 'r') as f:
+                with open(self.split_path / args.eval_img_keys_file, "r") as f:
                     img_keys = f.readlines()
-                self.img_keys = [int(k.strip()) for k in img_keys]
+                self.img_keys = [k.strip() for k in img_keys]
                 self.captions = {k: self.captions[k] for k in self.img_keys}
-                self.img_feats = {k: self.img_feats[k] for k in self.img_keys}
-
-            if args.eval_caption_index_file:
-                # hard negative image/caption indexs for retrieval re-rank setting.
-                # useful for mini val set to monitor the performance during training.
-                # However, it cannot be used together with cross image evaluation.
-                self.has_caption_indexs = True
-                assert not args.cross_image_eval 
-                caption_index_file = os.path.join(args.data_path, args.eval_caption_index_file)
-                self.caption_indexs = torch.load(caption_index_file)
-                if not type(self.caption_indexs[self.img_keys[0]]) == list:
-                    self.caption_indexs = {k: json.loads(self.caption_indexs[k]) for k in self.img_keys}
-            else:
-                self.has_caption_indexs = False
                 
+        if args.cross_image_eval:
+            self.effective_captions_per_img *= len(self.img_keys)
+            
         # The probability that a negative pair is sampled
-        assert 0 <= args.prob_unaligned <= 1, "prob_unaligned must be a probability"
+        assert 0 <= args.prob_unaligned < 1, "prob_unaligned must be a probability"
         self.prob_unaligned = args.prob_unaligned
+        self.split = split
         self.is_train = is_train
         self.tokenizer = tokenizer
         self.args = args
 
-    def get_image_caption_index(self, index):
+    def get_image_caption_index(self, index: int) -> Tuple[int, Tuple[int, int]]:
         # return img_idx to access features and [img_key, cap_idx] to access caption
         if not self.is_train and self.args.cross_image_eval:
             img_idx = index // (self.num_captions_per_img * len(self.img_keys))
             cap_idx = index % (self.num_captions_per_img * len(self.img_keys))
             img_idx1 = cap_idx // self.num_captions_per_img
             cap_idx1 = cap_idx % self.num_captions_per_img
-            return img_idx, [self.img_keys[img_idx1], cap_idx1]
-        if not self.is_train and self.has_caption_indexs:
-            img_idx = index // self.num_captions_per_img
-            cap_idx = index % self.num_captions_per_img
-            img_key1, cap_idx1 = self.caption_indexs[self.img_keys[img_idx]][cap_idx]
-            return img_idx, [img_key1, cap_idx1]
+            return img_idx, (self.img_keys[img_idx1], cap_idx1)
         img_idx = index // self.num_captions_per_img
         cap_idx = index % self.num_captions_per_img
-        return img_idx, [self.img_keys[img_idx], cap_idx]
+        return img_idx, (self.img_keys[img_idx], cap_idx)
 
-    def get_label(self, index):
-        img_idx, cap_idx = self.get_image_caption_index(index)
-        return 1.0 if self.img_keys[img_idx] == cap_idx[0] else 0.0
+    def prepare_caption(self, caption: str) -> Dict[str, torch.tensor]:
+       caption = self.tokenizer(caption, return_tensors='pt')
+       caption = {k: v.squeeze(0) for k,v in caption.items()}
+       return caption
 
-    def prepare_captions(self, text_a, text_b=None):
-       tokens_a = self.tokenizer(text_a, return_tensors='pt')
-       tokens_a = {k: v.squeeze(0) for k,v in tokens_a.items()}
-       return tokens_a
-
-    def __getitem__(self, index):
+    def __getitem__(self, index: int) -> Dict[str, any]:
         outputs = {}
         if self.is_train:
             img_idx, cap_idxs = self.get_image_caption_index(index)
             img_key = self.img_keys[img_idx]
-            features = self.get_image(img_key)
+            img_feats = self.get_image(img_key)
             caption = self.captions[cap_idxs[0]][cap_idxs[1]]
-            example = self.prepare_captions(caption)
+            textual_data = self.prepare_caption(caption)
 
             # select a negative pair
             neg_img_indexs = list(range(0, img_idx)) + list(range(img_idx + 1, len(self.img_keys)))
@@ -110,55 +99,80 @@ class RetrievalDataset(Dataset):
             
             label = 1.0
             
-            if random.random() <= self.prob_unaligned:
+            if random.random() < self.prob_unaligned:
                 # When to create an unaligned pair during training
                 
                 label = 0.0
                 
-                if random.random() <= 0.5:
+                if random.random() < 0.5:
                     # randomly select a negative caption from a different image.
                     cap_idx_neg = random.randint(0, self.num_captions_per_img - 1)
                     caption_neg = self.captions[self.img_keys[img_idx_neg]][cap_idx_neg]
-                    #caption = caption_neg
-                    example = self.prepare_captions(caption_neg)
+                    textual_data = self.prepare_caption(caption_neg)
                 else:
                     # randomly select a negative image 
-                    features = self.get_image(self.img_keys[img_idx_neg])
+                    img_feats = self.get_image(self.img_keys[img_idx_neg])
 
             outputs['labels'] = label
-            outputs.update(features)
-            outputs.update(example)
+            outputs.update(img_feats)
+            outputs.update(textual_data)
             
         else:
             img_idx, cap_idxs = self.get_image_caption_index(index)
             img_key = self.img_keys[img_idx]
-            features = self.get_image(img_key)
+            img_feats = self.get_image(img_key)
             caption = self.captions[cap_idxs[0]][cap_idxs[1]]
-            example = self.prepare_captions(caption)
+            textual_data = self.prepare_caption(caption)
             label = 1.0 if img_key == cap_idxs[0] else 0.0
             outputs['labels'] = label
-            outputs.update(features)
-            outputs.update(example)
+
+            outputs.update(img_feats)
+            outputs.update(textual_data)
             
         return outputs
 
-    def get_image(self, image_id):
-        return self.img_feats[str(image_id)]
+    def get_image(self, image_id: int) -> Dict[str, np.ndarray]:
+        if not hasattr(self, "img_feats"):
+            self.img_feats = h5py.File(self.split_path / f"{self.split}_img_frcnn_feats.h5", "r")
+        return dict(**self.img_feats[str(image_id)])
 
-    def __len__(self):
+    def __len__(self) -> int:
         if not self.is_train and self.args.cross_image_eval:
             return len(self.img_keys) ** 2 * self.num_captions_per_img
         return len(self.img_keys) * self.num_captions_per_img
 
 
-def compute_score_with_logits(logits, labels):
-    if logits.shape[1] > 1:
-        logits = torch.max(logits, 1)[1].data # argmax
-        scores = logits == labels 
-    else:
-        scores = torch.zeros_like(labels).cuda()
-        for i, (logit, label) in enumerate(zip(logits, labels)):
-            logit_ = torch.sigmoid(logit)
-            if (logit_ >= 0.5 and label == 1) or (logit_ < 0.5 and label == 0):
-                scores[i] = 1
-    return scores
+class ContrastiveLoss(nn.Module):
+    """
+    Compute contrastive loss
+    """
+
+    def __init__(self, margin: int = 0, top_k_violations: Optional[int] = None):
+        super().__init__()
+        self.margin = margin
+        self.top_k_violations = top_k_violations
+
+    def forward(self, scores: torch.tensor) -> torch.tensor:
+        diagonal = scores.diag().view(scores.size(0), 1)
+        d1 = diagonal.expand_as(scores)
+        d2 = diagonal.t().expand_as(scores)
+
+        # compare every diagonal score to scores in its column
+        # caption retrieval
+        cost_s = (self.margin + scores - d1).clamp(min=0)
+        # compare every diagonal score to scores in its row
+        # image retrieval
+        cost_im = (self.margin + scores - d2).clamp(min=0)
+
+        # clear diagonals
+        mask = (torch.eye(scores.size(0)) > .5).to(scores.device)
+        cost_s = cost_s.masked_fill(mask, 0)
+        cost_im = cost_im.masked_fill(mask, 0)
+
+        # If top_k_violations is defined
+        if self.top_k_violations:
+            cost_s = cost_s.topk(self.top_k_violations, dim=1)[0]
+            cost_im = cost_im.topk(self.top_k_violations, dim=0)[0]
+
+        return cost_s.sum() + cost_im.sum()
+
