@@ -3,7 +3,6 @@ import sys
 
 from pathlib import Path
 
-from lxmert import LxmertForIRConfig, LxmertForIRBCE, LxmertForIRContrastive
 from coco_ir import RetrievalDataset
 
 from transformers import (
@@ -15,7 +14,9 @@ from transformers import (
 )
 from transformers.trainer_utils import get_last_checkpoint
 
-from information_retrieval.utils import ModelArguments, DataTrainingArguments, compute_metrics_maker
+from coco_ir import RetrievalDataset
+from lxmert import LxmertForIRBCE, LxmertForIRContrastive
+from utils import compute_metrics_maker, DataTrainingArguments, LxmertForIRConfig, ModelArguments
 
 
 logger = logging.getLogger(__name__)
@@ -30,10 +31,6 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
         
-    # Convert to Path object for easier use
-    training_args.output_dir = Path(training_args.output_dir)
-    data_args.data_path = Path(data_args.data_path)
-        
     log_level = training_args.get_process_log_level()
     logger.setLevel(log_level)
     
@@ -46,9 +43,9 @@ def main():
     
     # Detecting last checkpoint.
     last_checkpoint = None
-    if training_args.output_dir.is_dir() and training_args.do_train and not training_args.overwrite_output_dir:
+    if Path(training_args.output_dir).is_dir() and training_args.do_train and not training_args.overwrite_output_dir:
         last_checkpoint = get_last_checkpoint(training_args.output_dir)
-        if last_checkpoint is None and len(training_args.output_dir.iterdir()) > 0:
+        if last_checkpoint is None and len(Path(training_args.output_dir).iterdir()) > 0:
             raise ValueError(
                 f"Output directory ({training_args.output_dir}) already exists and is not empty. "
                 "Use --overwrite_output_dir to overcome."
@@ -72,7 +69,7 @@ def main():
         cache_dir=model_args.cache_dir,
         num_labels=1,
         margin=model_args.margin,
-        max_violation=model_args.max_violation,
+        top_k_violations=model_args.top_k_violations
     )
     tokenizer = AutoTokenizer.from_pretrained(
         model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
