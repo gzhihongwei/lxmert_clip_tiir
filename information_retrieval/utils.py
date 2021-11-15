@@ -18,6 +18,9 @@ class ModelArguments:
     model_name_or_path: str = field(
         metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
     )
+    formulation: str = field(
+        metadata={"help": "Which formulation to use for text-image retrieval. Must be one of {'binary', 'contrastive'}"}
+    )
     config_name: Optional[str] = field(
         default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
     )
@@ -32,16 +35,13 @@ class ModelArguments:
         default=True,
         metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
     )
-    formulation: str = field(
-        metadata={"help": "Which formulation to use for text-image retrieval. Must be one of {'binary', 'contrastive'}"}
-    )
     margin: Optional[float] = field(
         default=0.2,
         metadata={"help": "Margin used in the contrastive loss. Define if using contrastive loss."}
     )
-    max_violation: Optional[bool] = field(
-        default=True,
-        metadata={"help": "Whether to use the maximum in batch negative violation as the loss."}
+    top_k_violations: Optional[int] = field(
+        default=None,
+        metadata={"help": "Specify for the top k in batch negative violations as the loss."}
     )
     
 
@@ -55,7 +55,8 @@ class DataTrainingArguments:
     data_path: str = field(
         metadata={"help": "Path to the data directory that has COCO."}
     )
-    prob_unaligned: float = field(
+    prob_unaligned: Optional[float] = field(
+        default=0,
         metadata={"help": "Probability that the images for each caption are randomly sampled from the negative images."}
     )
     cross_image_eval: Optional[bool] = field(
@@ -75,9 +76,9 @@ class DataTrainingArguments:
     
     
 class LxmertForIRConfig(LxmertConfig):
-    def __init__(self, margin=0.2, max_violation=True, **kwargs):
+    def __init__(self, margin=0.2, top_k_violations=None, **kwargs):
         self.margin = margin
-        self.max_violation = max_violation
+        self.top_k_violations = top_k_violations
         super().__init__(**kwargs)
 
 
