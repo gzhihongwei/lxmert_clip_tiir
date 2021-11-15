@@ -1,9 +1,11 @@
+import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from transformers import LxmertModel, LxmertPreTrainedModel
 
-from information_retrieval.coco_ir import ContrastiveLoss
-from information_retrieval.utils import LxmertForIROutput
+from coco_ir import ContrastiveLoss
+from utils import LxmertForIROutput
     
 
 class LxmertIRMatchingHead(nn.Module):
@@ -88,7 +90,7 @@ class LxmertForIRBCE(LxmertPreTrainedModel):
         )
         
 
-class LxmertForIRContrastive(LxmertForIRBCE):
+class LxmertForIRContrastive(LxmertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         # Configuration
@@ -101,7 +103,7 @@ class LxmertForIRContrastive(LxmertForIRBCE):
         self.init_weights()
         
         # Instead of BCE, use the contrastive loss as defined in `coco_ir.py`
-        self.loss = ContrastiveLoss(margin=self.config.margin, max_violation=self.config.max_violation)
+        self.loss = ContrastiveLoss(margin=self.config.margin, top_k_violations=self.config.top_k_violations)
         
     def forward(
         self,
@@ -132,11 +134,14 @@ class LxmertForIRContrastive(LxmertForIRBCE):
 
         visual_output = lxmert_output[1]
         pooled_visual_output = visual_output.mean(dim=1)
+        normalized_visual_output = F.normalize(pooled_visual_output, p=2, dim=1)
         pooled_textual_output = lxmert_output[2]
-        matching_score = (pooled_visual_output * pooled_textual_output).sum(dim=1)
+        normalized_textual_output = F.normalize(pooled_textual_output, p=2, dim=1)
+        matching_score = (normalized_visual_output * normalized_textual_output).sum(dim=1)
         loss = None
         if labels is not None:
-            loss = self.loss(pooled_visual_output.mm(pooled_textual_output.t()))
+            match_matrix = torch.inner(normalized_visual_output, normalized_textual_output)
+            loss = self.loss(match_matrix)
 
         if not return_dict:
             output = (matching_score,) + lxmert_output[3:]
