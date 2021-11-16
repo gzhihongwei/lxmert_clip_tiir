@@ -1,11 +1,47 @@
+from typing import Optional
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from transformers import LxmertModel, LxmertPreTrainedModel
 
-from coco_ir import ContrastiveLoss
-from utils import LxmertForIROutput
+from .utils import LxmertForIROutput
+
+
+class ContrastiveLoss(nn.Module):
+    """
+    Compute contrastive loss
+    """
+
+    def __init__(self, margin: int = 0, top_k_violations: Optional[int] = None):
+        super().__init__()
+        self.margin = margin
+        self.top_k_violations = top_k_violations
+
+    def forward(self, scores: torch.tensor) -> torch.tensor:
+        diagonal = scores.diag().view(scores.size(0), 1)
+        d1 = diagonal.expand_as(scores)
+        d2 = diagonal.t().expand_as(scores)
+
+        # compare every diagonal score to scores in its column
+        # caption retrieval
+        cost_s = (self.margin + scores - d1).clamp(min=0)
+        # compare every diagonal score to scores in its row
+        # image retrieval
+        cost_im = (self.margin + scores - d2).clamp(min=0)
+
+        # clear diagonals
+        mask = (torch.eye(scores.size(0)) > .5).to(scores.device)
+        cost_s = cost_s.masked_fill(mask, 0)
+        cost_im = cost_im.masked_fill(mask, 0)
+
+        # If top_k_violations is defined
+        if self.top_k_violations:
+            cost_s = cost_s.topk(self.top_k_violations, dim=1)[0]
+            cost_im = cost_im.topk(self.top_k_violations, dim=0)[0]
+
+        return cost_s.sum() + cost_im.sum()
     
 
 class LxmertIRMatchingHead(nn.Module):

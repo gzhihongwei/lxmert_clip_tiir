@@ -2,25 +2,22 @@
 
 from __future__ import absolute_import, division, print_function
 
-import json
 import random
 
-from pathlib import Path
-from typing import Dict, Optional, Tuple, Union
+from typing import Dict, Union
 
 import h5py
 import numpy as np
 import torch
-import torch.nn as nn
 
-from torch.utils.data import Dataset
 from transformers.tokenization_utils import PreTrainedTokenizer
 from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
-from utils import DataTrainingArguments
+from .utils import DataTrainingArguments
+from ..coco import COCORetrievalDataset
 
 
-class RetrievalDataset(Dataset):
+class LxmertRetrievalDataset(COCORetrievalDataset):
     """Image/Text Retrieval Dataset"""
     def __init__(self, 
                  tokenizer: Union[PreTrainedTokenizer, PreTrainedTokenizerFast],
@@ -36,48 +33,13 @@ class RetrievalDataset(Dataset):
              captions per image), labels (list of dictionary or str of all labels),
 
         """
-        super().__init__()
-        self.split_path = Path(args.data_path) / split
-        caption_file = self.split_path / f"{split}_captions.pt"
-        self.captions = torch.load(caption_file)
-        self.img_keys = list(self.captions.keys())  # img_id as int
-        if not type(self.captions[self.img_keys[0]]) == list:
-            self.captions = {k: json.loads(self.captions[k]) for k in self.img_keys}
-
-        # There are 5 captions per image in COCO
-        self.num_captions_per_img = self.effective_captions_per_img = 5
+        super().__init__(args=args, split=split, is_train=is_train)
         
-        if not is_train:
-            if args.eval_img_keys_file:
-                # select a subset of image keys for evaluation. eg. COCO 1k and 5k
-                # eval_img_keys_file is a list of image keys saved in tsv file
-                with open(self.split_path / args.eval_img_keys_file, "r") as f:
-                    img_keys = f.readlines()
-                self.img_keys = [k.strip() for k in img_keys]
-                self.captions = {k: self.captions[k] for k in self.img_keys}
-                
-        if args.cross_image_eval:
-            self.effective_captions_per_img *= len(self.img_keys)
-            
         # The probability that a negative pair is sampled
         assert 0 <= args.prob_unaligned < 1, "prob_unaligned must be a probability"
         self.prob_unaligned = args.prob_unaligned
-        self.split = split
-        self.is_train = is_train
-        self.tokenizer = tokenizer
-        self.args = args
 
-    def get_image_caption_index(self, index: int) -> Tuple[int, Tuple[int, int]]:
-        # return img_idx to access features and [img_key, cap_idx] to access caption
-        if not self.is_train and self.args.cross_image_eval:
-            img_idx = index // (self.num_captions_per_img * len(self.img_keys))
-            cap_idx = index % (self.num_captions_per_img * len(self.img_keys))
-            img_idx1 = cap_idx // self.num_captions_per_img
-            cap_idx1 = cap_idx % self.num_captions_per_img
-            return img_idx, (self.img_keys[img_idx1], cap_idx1)
-        img_idx = index // self.num_captions_per_img
-        cap_idx = index % self.num_captions_per_img
-        return img_idx, (self.img_keys[img_idx], cap_idx)
+        self.tokenizer = tokenizer
 
     def prepare_caption(self, caption: str) -> Dict[str, torch.tensor]:
        caption = self.tokenizer(caption, return_tensors='pt')
@@ -135,44 +97,3 @@ class RetrievalDataset(Dataset):
         if not hasattr(self, "img_feats"):
             self.img_feats = h5py.File(self.split_path / f"{self.split}_img_frcnn_feats.h5", "r")
         return dict(**self.img_feats[str(image_id)])
-
-    def __len__(self) -> int:
-        if not self.is_train and self.args.cross_image_eval:
-            return len(self.img_keys) ** 2 * self.num_captions_per_img
-        return len(self.img_keys) * self.num_captions_per_img
-
-
-class ContrastiveLoss(nn.Module):
-    """
-    Compute contrastive loss
-    """
-
-    def __init__(self, margin: int = 0, top_k_violations: Optional[int] = None):
-        super().__init__()
-        self.margin = margin
-        self.top_k_violations = top_k_violations
-
-    def forward(self, scores: torch.tensor) -> torch.tensor:
-        diagonal = scores.diag().view(scores.size(0), 1)
-        d1 = diagonal.expand_as(scores)
-        d2 = diagonal.t().expand_as(scores)
-
-        # compare every diagonal score to scores in its column
-        # caption retrieval
-        cost_s = (self.margin + scores - d1).clamp(min=0)
-        # compare every diagonal score to scores in its row
-        # image retrieval
-        cost_im = (self.margin + scores - d2).clamp(min=0)
-
-        # clear diagonals
-        mask = (torch.eye(scores.size(0)) > .5).to(scores.device)
-        cost_s = cost_s.masked_fill(mask, 0)
-        cost_im = cost_im.masked_fill(mask, 0)
-
-        # If top_k_violations is defined
-        if self.top_k_violations:
-            cost_s = cost_s.topk(self.top_k_violations, dim=1)[0]
-            cost_im = cost_im.topk(self.top_k_violations, dim=0)[0]
-
-        return cost_s.sum() + cost_im.sum()
-

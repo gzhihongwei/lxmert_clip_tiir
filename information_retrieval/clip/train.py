@@ -3,10 +3,11 @@ import sys
 
 from pathlib import Path
 
-from coco_ir import RetrievalDataset
-
 from transformers import (
     AutoTokenizer,
+    AutoFeatureExtractor,
+    CLIPConfig,
+    CLIPProcessor,
     HfArgumentParser,
     set_seed,
     Trainer,
@@ -14,9 +15,9 @@ from transformers import (
 )
 from transformers.trainer_utils import get_last_checkpoint
 
-from coco_ir import RetrievalDataset
-from lxmert import LxmertForIRBCE, LxmertForIRContrastive
-from utils import compute_metrics_maker, DataTrainingArguments, LxmertForIRConfig, ModelArguments
+from information_retrieval.clip import CLIPForIR
+from information_retrieval.clip.data import CLIPRetrievalDataset
+from information_retrieval.utils import compute_metrics_maker, DataTrainingArguments, ModelArguments
 
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,7 @@ def main():
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
         # let's parse it to get our arguments.
-        model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
+        model_args, data_args, training_args = parser.parse_json_file(json_file=Path(sys.argv[1]).resolve())
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
         
@@ -64,27 +65,22 @@ def main():
     # Distributed training:
     # The .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
-    config = LxmertForIRConfig.from_pretrained(
+    config = CLIPConfig.from_pretrained(
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
-        num_labels=1,
-        margin=model_args.margin,
-        top_k_violations=model_args.top_k_violations
     )
     tokenizer = AutoTokenizer.from_pretrained(
         model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
         use_fast=model_args.use_fast_tokenizer,
     )
+    feature_extractor = AutoFeatureExtractor.from_pretrained(
+        model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
+        cache_dir=model_args.cache_dir,
+    )
+    processor = CLIPProcessor(feature_extractor=feature_extractor, tokenizer=tokenizer)
 
-    if model_args.formulation == "binary":
-        base_model = LxmertForIRBCE
-    elif model_args.formulation == "contrastive":
-        base_model = LxmertForIRContrastive
-    else:
-        raise ValueError("Formulation must either be 'binary' or 'contrastive'")
-
-    model = base_model.from_pretrained(
+    model = CLIPForIR.from_pretrained(
         model_args.model_name_or_path,
         config=config,
         cache_dir=model_args.cache_dir,
@@ -92,9 +88,9 @@ def main():
     
     model.resize_token_embeddings(len(tokenizer))
     
-    train_dataset = RetrievalDataset(tokenizer, data_args, "train", is_train=True) if training_args.do_train else None
-    val_dataset = RetrievalDataset(tokenizer, data_args, "minival" if data_args.evaluate_during_training else "val", is_train=False) if training_args.do_eval else None
-    test_dataset = RetrievalDataset(tokenizer, data_args, "test", is_train=False) if training_args.do_predict else None
+    train_dataset = CLIPRetrievalDataset(processor, data_args, "train", is_train=True) if training_args.do_train else None
+    val_dataset = CLIPRetrievalDataset(processor, data_args, "minival" if data_args.evaluate_during_training else "val", is_train=False) if training_args.do_eval else None
+    test_dataset = CLIPRetrievalDataset(processor, data_args, "test", is_train=False) if training_args.do_predict else None
     
     if not training_args.do_train and not (training_args.do_eval or training_args.do_predict):
         logger.info("There is nothing to do. Please pass `do_train`, `do_eval` and/or `do_predict`.")
