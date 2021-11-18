@@ -1,14 +1,54 @@
 from dataclasses import dataclass
+from typing import Any, Optional, Tuple
 
 import torch
 
 from transformers import CLIPModel
-from transformers.models.clip.modeling_clip import CLIPOutput
+from transformers.file_utils import ModelOutput
+from transformers.modeling_outputs import BaseModelOutputWithPooling
 
 
 @dataclass
-class CLIPForIROutput(CLIPOutput):
+class CLIPForIROutput(ModelOutput):
+    """
+    Args:
+        loss (:obj:`torch.FloatTensor` of shape :obj:`(1,)`, `optional`, returned when :obj:`return_loss` is :obj:`True`):
+            Contrastive loss for image-text similarity.
+        matching_score:(:obj:`torch.FloatTensor` of shape `(image_batch_size,)`):
+            The diagonal entries of the `logits_per_image` attribute, which represents the image-text similarity
+            scores for the actual pairing in the dataloader.
+        logits_per_image:(:obj:`torch.FloatTensor` of shape :obj:`(image_batch_size, text_batch_size)`):
+            The scaled dot product scores between :obj:`image_embeds` and :obj:`text_embeds`. This represents the
+            image-text similarity scores.
+        logits_per_text:(:obj:`torch.FloatTensor` of shape :obj:`(text_batch_size, image_batch_size)`):
+            The scaled dot product scores between :obj:`text_embeds` and :obj:`image_embeds`. This represents the
+            text-image similarity scores.
+        text_embeds(:obj:`torch.FloatTensor` of shape :obj:`(batch_size, output_dim`):
+            The text embeddings obtained by applying the projection layer to the pooled output of
+            :class:`~transformers.CLIPTextModel`.
+        image_embeds(:obj:`torch.FloatTensor` of shape :obj:`(batch_size, output_dim`):
+            The image embeddings obtained by applying the projection layer to the pooled output of
+            :class:`~transformers.CLIPVisionModel`.
+        text_model_output(:obj:`BaseModelOutputWithPooling`):
+            The output of the :class:`~transformers.CLIPTextModel`.
+        vision_model_output(:obj:`BaseModelOutputWithPooling`):
+            The output of the :class:`~transformers.CLIPVisionModel`.
+    """
+
+    loss: Optional[torch.FloatTensor] = None
     matching_score: torch.FloatTensor = None
+    logits_per_image: torch.FloatTensor = None
+    logits_per_text: torch.FloatTensor = None
+    text_embeds: torch.FloatTensor = None
+    image_embeds: torch.FloatTensor = None
+    text_model_output: BaseModelOutputWithPooling = None
+    vision_model_output: BaseModelOutputWithPooling = None
+
+    def to_tuple(self) -> Tuple[Any]:
+        return tuple(
+            self[k] if k not in ["text_model_output", "vision_model_output"] else getattr(self, k).to_tuple()
+            for k in self.keys()
+        )
     
 
 class CLIPForIR(CLIPModel): 
