@@ -13,7 +13,7 @@ from information_retrieval.utils import DataTrainingArguments
 
 if __name__ == "__main__":
     parser = HfArgumentParser(DataTrainingArguments)
-    data_args = parser.parse_args_into_dataclasses()
+    data_args = parser.parse_args_into_dataclasses()[0]
     
     processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
     test_dataset = CLIPRetrievalDataset(processor, data_args, "test", False)
@@ -42,9 +42,9 @@ if __name__ == "__main__":
     # Get the ground truth captions
     i2t_ground_truth = np.arange(5000)
     ground_truth_img_idxs = i2t_ground_truth // 5
-    ground_truth_img_keys = np.array(map(lambda x: test_dataset.img_keys[x], ground_truth_img_idxs))
+    ground_truth_img_keys = np.array(list(map(lambda x: test_dataset.img_keys[x], ground_truth_img_idxs)))
     ground_truth_cap_idxs = i2t_ground_truth % 5
-    ground_truth_captions = np.array(map(lambda x: test_dataset.captions[x[0]][x[1]], zip(ground_truth_img_keys, ground_truth_cap_idxs)))
+    ground_truth_captions = np.array(list(map(lambda x: test_dataset.captions[x[0]][x[1]], zip(ground_truth_img_keys, ground_truth_cap_idxs))))
     
     # Get the indices in the form for the PyTorch dataset to get the ground_truth captions
     i2t_sorted_logits = (-i2t_logits).argsort(axis=1)[:, :10]
