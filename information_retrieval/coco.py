@@ -12,7 +12,7 @@ import torch
 
 from torch.utils.data import Dataset
 
-from utils import DataTrainingArguments
+from .utils import DataTrainingArguments
 
 
 class COCORetrievalDataset(Dataset):
