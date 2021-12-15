@@ -32,6 +32,14 @@ class ModelArguments:
         default=True,
         metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
     )
+    return_dict: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to return dicts in model forward"}
+    )
+    ignore_keys: Optional[List[str]] = field(
+        default=None,
+        metadata={"help": "What keys to ignore during evaluation if return_dict=True"}
+    )
 
 
 @dataclass
@@ -61,9 +69,13 @@ class DataTrainingArguments:
         default=False,
         metadata={"help": "Run evaluation during training at each save_steps."}
     )
+    evaluation_output_file: Optional[str] = field(
+        default=None,
+        metadata={"help": "Where to output the ranks in both directions, labels, and logits if specified"}
+    )
     
     
-def compute_ranks(labels: np.ndarray, logits: np.ndarray, num_captions_per_img: int) -> Tuple[List[int], List[int]]:
+def compute_ranks(labels: np.ndarray, logits: np.ndarray, num_captions_per_img: int, output_file: Optional[List[str]] = None) -> Tuple[List[int], List[int]]:
     labels = labels.reshape(-1, num_captions_per_img)
     logits = logits.reshape(-1, num_captions_per_img)
     i2t_ranks, t2i_ranks = [], []
@@ -85,12 +97,16 @@ def compute_ranks(labels: np.ndarray, logits: np.ndarray, num_captions_per_img: 
                 rank = r
                 break
         t2i_ranks.append(rank)
-    return i2t_ranks, t2i_ranks
+    
+    if output_file is not None:
+        np.savez(output_file, i2t_ranks=i2t_ranks, t2i_ranks=t2i_ranks, labels=labels, logits=logits)
+
+    return i2t_ranks, t2i_ranks, labels, logits
 
     
-def compute_metrics_maker(num_captions_per_img: int) -> Callable[[EvalPrediction], Dict]:
+def compute_metrics_maker(num_captions_per_img: int, output_file: Optional[List[str]] = None) -> Callable[[EvalPrediction], Dict]:
     def _compute_metrics(predictions: EvalPrediction) -> Dict:
-        i2t_ranks, t2i_ranks = compute_ranks(predictions.label_ids, predictions.predictions, num_captions_per_img)
+        i2t_ranks, t2i_ranks, labels, logits = compute_ranks(predictions.label_ids, predictions.predictions, num_captions_per_img, output_file)
         
         rank = [1, 5, 10]
         
