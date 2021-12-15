@@ -35,7 +35,8 @@ class CLIPRetrievalDataset(COCORetrievalDataset):
         self.processor = processor
 
     def process_data(self, caption: str, image: np.ndarray) -> Dict[str, torch.tensor]:
-       inputs = self.processor(text=caption, images=image, return_tensors="np", padding=True)
+       inputs = self.processor(text=caption, images=image, return_tensors="pt", padding=True)
+       inputs = {k: v.squeeze(0) for k, v in inputs.items()}
        return inputs
 
     def __getitem__(self, index: int) -> Dict[str, any]:
@@ -45,7 +46,7 @@ class CLIPRetrievalDataset(COCORetrievalDataset):
         caption = self.captions[cap_idxs[0]][cap_idxs[1]]
         image = self.get_image(img_key)
         outputs = self.process_data(caption=caption, image=image)
-        
+
         if not self.is_train and self.args.cross_image_eval:
             label = 1.0 if img_key == cap_idxs[0] else 0.0
             outputs['labels'] = label
@@ -55,4 +56,10 @@ class CLIPRetrievalDataset(COCORetrievalDataset):
     def get_image(self, image_id: str) -> np.ndarray:
         if not hasattr(self, "images"):
             self.images = h5py.File(self.split_path / f"{self.split}_imgs.h5", "r")
-        return self.images[image_id]
+        image = self.images[image_id][()]
+
+        if len(image.shape) == 2:
+            image = image[..., np.newaxis].repeat(3, 2)
+
+        return image
+
