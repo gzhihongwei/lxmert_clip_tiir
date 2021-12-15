@@ -14,6 +14,7 @@ from transformers import (
     TrainingArguments
 )
 from transformers.trainer_utils import get_last_checkpoint
+from tqdm import tqdm
 
 from information_retrieval.clip import CLIPForIR
 from information_retrieval.clip.data import CLIPRetrievalDataset
@@ -68,25 +69,17 @@ def main():
     config = CLIPConfig.from_pretrained(
         model_args.config_name if model_args.config_name else model_args.model_name_or_path,
         cache_dir=model_args.cache_dir,
+        return_dict=model_args.return_dict,
     )
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
-        cache_dir=model_args.cache_dir,
-        use_fast=model_args.use_fast_tokenizer,
+    processor = CLIPProcessor.from_pretrained(
+        model_args.model_name_or_path,
+        cache_dir=model_args.cache_dir
     )
-    feature_extractor = AutoFeatureExtractor.from_pretrained(
-        model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
-        cache_dir=model_args.cache_dir,
-    )
-    processor = CLIPProcessor(feature_extractor=feature_extractor, tokenizer=tokenizer)
-
     model = CLIPForIR.from_pretrained(
         model_args.model_name_or_path,
         config=config,
         cache_dir=model_args.cache_dir,
     )
-    
-    model.resize_token_embeddings(len(tokenizer))
     
     train_dataset = CLIPRetrievalDataset(processor, data_args, "train", is_train=True) if training_args.do_train else None
     val_dataset = CLIPRetrievalDataset(processor, data_args, "minival" if data_args.evaluate_during_training else "val", is_train=False) if training_args.do_eval else None
@@ -100,7 +93,7 @@ def main():
     
     if training_args.do_eval or training_args.do_predict:
         num_captions_per_img = val_dataset.effective_captions_per_img if training_args.do_eval else test_dataset.effective_captions_per_img
-        compute_metrics = compute_metrics_maker(num_captions_per_img)
+        compute_metrics = compute_metrics_maker(num_captions_per_img, data_args.evaluation_output_file)
     
     # Initialize our Trainer
     trainer = Trainer(
@@ -108,7 +101,7 @@ def main():
         args=training_args,
         train_dataset=train_dataset if training_args.do_train else None,
         eval_dataset=val_dataset if training_args.do_eval else test_dataset if training_args.do_predict else None,
-        tokenizer=tokenizer,
+        tokenizer=processor.tokenizer,
         compute_metrics=compute_metrics,
     )
     
@@ -125,7 +118,7 @@ def main():
     if training_args.do_eval or training_args.do_predict:
         logger.info("*********** Evaluate ***********")
         split = "eval" if training_args.do_eval else "test"
-        metrics = trainer.evaluate(metric_key_prefix=split)
+        metrics = trainer.evaluate(ignore_keys=model_args.ignore_keys, metric_key_prefix=split)
 
         trainer.log_metrics(split, metrics)
         trainer.save_metrics(split, metrics)
