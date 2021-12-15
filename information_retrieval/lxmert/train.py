@@ -103,7 +103,7 @@ def main():
     
     if training_args.do_eval or training_args.do_predict:
         num_captions_per_img = val_dataset.effective_captions_per_img if training_args.do_eval else test_dataset.effective_captions_per_img
-        compute_metrics = compute_metrics_maker(num_captions_per_img)
+        compute_metrics = compute_metrics_maker(num_captions_per_img, data_args.evaluation_output_file)
     
     # Initialize our Trainer
     trainer = Trainer(
