@@ -137,3 +137,6 @@ dmypy.json
 
 # Ignore the runs directory
 *runs/
+
+# Dataset subdirectory
+datasets/
