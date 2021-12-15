@@ -13,7 +13,7 @@ import torch
 from transformers.tokenization_utils import PreTrainedTokenizer
 from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
-from .utils import DataTrainingArguments
+from ..utils import DataTrainingArguments
 from ..coco import COCORetrievalDataset
 
 
