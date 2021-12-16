@@ -1,31 +1,26 @@
 #!/bin/bash
 #
 #SBATCH --job-name=CLIP-test
-#SBATCH --output=%j.log
+#SBATCH -o %j.log
 #SBATCH -e %j.err
 #SBATCH --partition=2080ti-long
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:8
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=376GB
-#SBATCH --exclude=node054,node059,node083,node084,node094,node095,node105,node108
-#2080ti-long, gres=gpu:8, 376GB
 
-# TEST_SPLIT=test
-# mkdir -p /local/gzwei/datasets/coco_ir
-# 
-# rsync --ignore-existing -av $WORK_BASE/datasets/coco_ir/$TEST_SPLIT /local/gzwei/datasets/coco_ir
-
+# Activate appropriate environment
 . ../venv/bin/activate
 
 # ============= Arguments  =========== #
 DATA_PATH=$WORK_BASE/datasets/coco_ir/
 FORMULATION=contrastive
-OUTPUT_DIR=runs/$MODEL/$FORMULATION
+OUTPUT_DIR=runs/clip/$FORMULATION
 LOAD_PATH=openai/clip-vit-base-patch32
 BATCH_SIZE=128
 N_GPU=8
 
+# Run prediction on 8 processes on the 8 separate GPUs allocated
 python3 -m torch.distributed.run --nproc_per_node $N_GPU clip/train.py \
     --model_name_or_path $LOAD_PATH \
     --formulation $FORMULATION \

@@ -8,28 +8,24 @@
 #SBATCH --gres=gpu:8
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=376GB
-#2080ti-long, gres=gpu:8, 376GB
 
-mkdir -p /local/gzwei/datasets/coco_ir
-
-rsync --ignore-existing -av $WORK_BASE/datasets/coco_ir /local/gzwei/datasets --exclude test --exclude exclude
-
+# Activate appropriate environment
 . ../venv/bin/activate
 
 # ============= Arguments  =========== #
-DATA_PATH=/local/gzwei/datasets/coco_ir/
-FORMULATION=contrastive
-OUTPUT_DIR=runs/${FORMULATION}_test
+DATA_PATH=$WORK_BASE/datasets/coco_ir/
+FORMULATION=binary
+OUTPUT_DIR=runs/lxmert/$FORMULATION
 PROB_UNALIGNED=0
 MARGIN=0.7
 BATCH_SIZE=64
 LEARNING_RATE=1e-5
-NUM_EPOCHS=1
+NUM_EPOCHS=10
 WEIGHT_DECAY=1e-4
-TOP_K=1
 N_GPU=8
 METRIC=rsum
 
+# Run 8 training processes on the 8 separate GPUs allocated
 python3 -m torch.distributed.run --nproc_per_node=$N_GPU train.py \
             --model_name_or_path unc-nlp/lxmert-base-uncased \
             --formulation $FORMULATION \

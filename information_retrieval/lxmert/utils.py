@@ -11,6 +11,15 @@ from ..utils import ModelArguments
 
 @dataclass
 class LxmertModelArguments(ModelArguments):
+    """
+    Extra model arguments for possible extensions (i.e contrastive learning with varying the number of in batch negatives to consider
+    for the loss).
+
+    Args:
+        margin (Optional[float]): The margin used in the contrastive loss.
+        top_k_violations (Optional[int]): The number of the top k in batch negative violations as the loss.
+    """
+    
     margin: Optional[float] = field(
         default=0.2,
         metadata={"help": "Margin used in the contrastive loss. Define if using contrastive loss."}
@@ -19,7 +28,9 @@ class LxmertModelArguments(ModelArguments):
         default=None,
         metadata={"help": "Specify for the top k in batch negative violations as the loss."}
     )
+    
 
+@dataclass
 class LxmertForIRConfig(LxmertConfig):
     def __init__(self, margin=0.2, top_k_violations=None, **kwargs):
         self.margin = margin
