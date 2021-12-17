@@ -2,10 +2,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
-import torch
 
-from transformers.file_utils import ModelOutput
-from transformers.models.lxmert.configuration_lxmert import LxmertConfig
 from transformers.trainer_utils import EvalPrediction
 
 
@@ -35,15 +32,14 @@ class ModelArguments:
         default=True,
         metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
     )
-    margin: Optional[float] = field(
-        default=0.2,
-        metadata={"help": "Margin used in the contrastive loss. Define if using contrastive loss."}
+    return_dict: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to return dicts in model forward"}
     )
-    top_k_violations: Optional[int] = field(
+    ignore_keys: Optional[List[str]] = field(
         default=None,
-        metadata={"help": "Specify for the top k in batch negative violations as the loss."}
+        metadata={"help": "What keys to ignore during evaluation if return_dict=True"}
     )
-    
 
 
 @dataclass
@@ -73,94 +69,90 @@ class DataTrainingArguments:
         default=False,
         metadata={"help": "Run evaluation during training at each save_steps."}
     )
+    evaluation_output_file: Optional[str] = field(
+        default=None,
+        metadata={"help": "Where to output the ranks in both directions, labels, and logits if specified"}
+    )
     
     
-class LxmertForIRConfig(LxmertConfig):
-    def __init__(self, margin=0.2, top_k_violations=None, **kwargs):
-        self.margin = margin
-        self.top_k_violations = top_k_violations
-        super().__init__(**kwargs)
-
-
-@dataclass
-class LxmertForIROutput(ModelOutput):
-    """
-    Output type of :class:`LxmertForIR*`.
+def compute_ranks(labels: np.ndarray, logits: np.ndarray, num_captions_per_img: int, output_file: Optional[str] = None) -> Tuple[List[int], List[int]]:
+    """Computes the rankings between every pairing of images and text and the rank of the first ground truth
+    ground-truth pair.
 
     Args:
-        loss (`optional`, returned when ``labels`` is provided, ``torch.FloatTensor`` of shape :obj:`(1,)`):
-            Total loss as the sum of the masked language modeling loss and the next sequence prediction
-            (classification) loss.k.
-        matching_score: (:obj:`torch.FloatTensor` of shape :obj:`(batch_size,)`, `optional`):
-            Scores of image-text matching objective (binary classification).
-        language_hidden_states (:obj:`tuple(torch.FloatTensor)`, `optional`, returned when ``output_hidden_states=True`` is passed or when ``config.output_hidden_states=True``):
-            Tuple of :obj:`torch.FloatTensor` (one for input features + one for the output of each cross-modality
-            layer) of shape :obj:`(batch_size, sequence_length, hidden_size)`.
-        vision_hidden_states (:obj:`tuple(torch.FloatTensor)`, `optional`, returned when ``output_hidden_states=True`` is passed or when ``config.output_hidden_states=True``):
-            Tuple of :obj:`torch.FloatTensor` (one for input features + one for the output of each cross-modality
-            layer) of shape :obj:`(batch_size, sequence_length, hidden_size)`.
-        language_attentions (:obj:`tuple(torch.FloatTensor)`, `optional`, returned when ``output_attentions=True`` is passed or when ``config.output_attentions=True``):
-            Tuple of :obj:`torch.FloatTensor` (one for each layer) of shape :obj:`(batch_size, num_heads,
-            sequence_length, sequence_length)`. Attentions weights after the attention softmax, used to compute the
-            weighted average in the self-attention heads.
-        vision_attentions (:obj:`tuple(torch.FloatTensor)`, `optional`, returned when ``output_attentions=True`` is passed or when ``config.output_attentions=True``):
-            Tuple of :obj:`torch.FloatTensor` (one for each layer) of shape :obj:`(batch_size, num_heads,
-            sequence_length, sequence_length)`. Attentions weights after the attention softmax, used to compute the
-            weighted average in the self-attention heads.
-        cross_encoder_attentions (:obj:`tuple(torch.FloatTensor)`, `optional`, returned when ``output_attentions=True`` is passed or when ``config.output_attentions=True``):
-            Tuple of :obj:`torch.FloatTensor` (one for each layer) of shape :obj:`(batch_size, num_heads,
-            sequence_length, sequence_length)`. Attentions weights after the attention softmax, used to compute the
-            weighted average in the self-attention heads.
-    """
+        labels (np.ndarray): The labels of whether a given pair is a ground-truth pair.
+        logits (np.ndarray): The logits produced by the model when computing the matching score for a given pair
+        num_captions_per_img (int): The number of captions per image (potentially different for 1k test split vs. 5k test split).
+        output_file (str, optional): The output file to dump the ranks and matching matrices. Defaults to None.
 
-    loss: Optional[torch.FloatTensor] = None
-    matching_score: Optional[torch.FloatTensor] = None
-    language_hidden_states: Optional[Tuple[torch.FloatTensor]] = None
-    vision_hidden_states: Optional[Tuple[torch.FloatTensor]] = None
-    language_attentions: Optional[Tuple[torch.FloatTensor]] = None
-    vision_attentions: Optional[Tuple[torch.FloatTensor]] = None
-    cross_encoder_attentions: Optional[Tuple[torch.FloatTensor]] = None
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: The ranks of ground-truth pairs for text retrieval and image retrieval respectively.
+    """
     
-    
-def compute_ranks(labels: np.ndarray, logits: np.ndarray, num_captions_per_img: int) -> Tuple[List[int], List[int]]:
+    # Each row is an image and each column is a caption
     labels = labels.reshape(-1, num_captions_per_img)
     logits = logits.reshape(-1, num_captions_per_img)
-    i2t_ranks, t2i_ranks = [], []
-    for lab, sim in zip(labels, logits):
-        inds = (-sim).argsort()
-        rank = num_captions_per_img
-        for r, ind in enumerate(inds):
-            if lab[ind] == 1:
-                rank = r
-                break
-        i2t_ranks.append(rank)
-    labels = labels.swapaxes(0, 1)
-    logits = logits.swapaxes(0, 1)
-    for lab, sim in zip(labels, logits):
-        inds = (-sim).argsort()
-        rank = num_captions_per_img
-        for r, ind in enumerate(inds):
-            if lab[ind] == 1:
-                rank = r
-                break
-        t2i_ranks.append(rank)
+    
+    # Sort the logits along each column in descending order, so an image is the query
+    inds = (-logits).argsort(axis=1)
+    # Sort the labels along each row given by the rank predictions
+    sorted_labels = np.take_along_axis(labels, inds, axis=1)
+    # Get the first ground-truth pair across all of the captions
+    i2t_ranks = (sorted_labels == 1).argmax(axis=1)
+    
+    # Sort the logits along each column in descending order, so a caption is the query
+    inds = (-logits).argsort(axis=0)
+    # Sort the labels along each column given by the rank predictions
+    sorted_labels = np.take_along_axis(labels, inds, axis=0)
+    # Get the first ground-truth pair across all of the images
+    t2i_ranks = (sorted_labels == 1).argmax(axis=0)
+    
+    # Dump to the output_file?
+    if output_file is not None:
+        np.savez(output_file, i2t_ranks=i2t_ranks, t2i_ranks=t2i_ranks, labels=labels, logits=logits)
+
     return i2t_ranks, t2i_ranks
 
     
-def compute_metrics_maker(num_captions_per_img: int) -> Callable[[EvalPrediction], Dict]:
+def compute_metrics_maker(num_captions_per_img: int, output_file: Optional[str] = None) -> Callable[[EvalPrediction], Dict]:
+    """Creates a closure that takes number of captions per image and the output file and creates the metrics based off of
+    the HuggingFace Trainer API.
+
+    Args:
+        num_captions_per_img (int): The number of captions per image (potentially different for 1k test split vs. 5k test split).
+        output_file (str, optional): The output file to dump the ranks and matching matrices. Defaults to None.
+
+    Returns:
+        Callable[[EvalPrediction], Dict]: Function that calculates metrics as defined in the HuggingFace Trainer API.
+    """
+    
     def _compute_metrics(predictions: EvalPrediction) -> Dict:
-        i2t_ranks, t2i_ranks = compute_ranks(predictions.label_ids, predictions.predictions, num_captions_per_img)
+        """Computes the metrics with the specified number of captions per image and to dump the rank matrics to the specified output file.
+
+        Args:
+            predictions (EvalPrediction): Predictions that the Trainer API provides.
+
+        Returns:
+            Dict: Dictionary of the different calculated metrics
+        """
         
+        # Get the ranks of the first ground-truth
+        i2t_ranks, t2i_ranks = compute_ranks(predictions.label_ids, predictions.predictions, num_captions_per_img, output_file)
+        
+        # Care about recall@1, recall@5, and recall@10
         rank = [1, 5, 10]
         
-        i2t_accs = [sum([_ < r for _ in i2t_ranks]) / len(i2t_ranks) for r in rank]
+        # The proportion of images where the first retrieved ground-truth caption is retrieved within the top k
+        i2t_accs = [sum([r < k for r in i2t_ranks]) / len(i2t_ranks) for k in rank]
         eval_result = {"i2t_R@1": i2t_accs[0], "i2t_R@5": i2t_accs[1], "i2t_R@10": i2t_accs[2]}
         
-        t2i_accs = [sum([_ < r for _ in t2i_ranks]) / len(t2i_ranks) for r in rank]
+        # The proportion of images where the retrieved ground-truth image is retrieved within the top k
+        t2i_accs = [sum([r < k for r in t2i_ranks]) / len(t2i_ranks) for k in rank]
         eval_result["t2i_R@1"] = t2i_accs[0]
         eval_result["t2i_R@5"] = t2i_accs[1]
         eval_result["t2i_R@10"] = t2i_accs[2]
         
+        # An easier proxy to make sure validation scores are increasing.
         eval_result["rsum"] = sum(eval_result.values())
         
         return eval_result

@@ -1,5 +1,10 @@
+ftfy
 hostlist
+h5py
 numpy
-torch
-torchvision
-transformers
+pillow
+spacy
+https://download.pytorch.org/whl/cu111/torch-1.9.1%2Bcu111-cp37-cp37m-linux_x86_64.whl
+https://download.pytorch.org/whl/cu111/torchvision-0.10.1%2Bcu111-cp37-cp37m-linux_x86_64.whl
+transformers==4.11.2
+tqdm
