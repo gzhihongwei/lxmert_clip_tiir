@@ -32,7 +32,17 @@ class LxmertModelArguments(ModelArguments):
 
 @dataclass
 class LxmertForIRConfig(LxmertConfig):
-    def __init__(self, margin=0.2, top_k_violations=None, **kwargs):
+    """
+    LxmertConfig that additionally defines the margin and top k violations for the ContrastiveLoss.
+    """
+    def __init__(self, margin: float =0.2, top_k_violations: int = None, **kwargs):
+        """
+        Initializes the config.
+
+        Args:
+            margin (float, optional): The margin for the contrastive loss. Defaults to 0.2.
+            top_k_violations (int, optional): Number k of the top violations. Defaults to None.
+        """
         self.margin = margin
         self.top_k_violations = top_k_violations
         super().__init__(**kwargs)

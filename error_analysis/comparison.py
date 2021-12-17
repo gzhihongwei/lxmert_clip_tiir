@@ -1,14 +1,11 @@
+import argparse
 import json
-import os
-
-from pathlib import Path
 
 import numpy as np
 
 from transformers import CLIPProcessor
 
 from information_retrieval.clip.data import CLIPRetrievalDataset
-from information_retrieval.utils import DataTrainingArguments
 
 
 if __name__ == "__main__":

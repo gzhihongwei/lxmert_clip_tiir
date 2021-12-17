@@ -1,25 +1,42 @@
-from typing import Optional
+from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from transformers import LxmertModel, LxmertPreTrainedModel
+from transformers.models.lxmert.configuration_lxmert import LxmertConfig
 
-from .utils import LxmertForIROutput
+from .utils import LxmertForIRConfig, LxmertForIROutput
 
 
 class ContrastiveLoss(nn.Module):
     """
-    Compute contrastive loss
+    Compute contrastive loss as given in VSE++ (https://arxiv.org/abs/1707.05612), but allowing different top k violations.
     """
 
     def __init__(self, margin: int = 0, top_k_violations: Optional[int] = None):
+        """
+        Initialize contrastive loss.
+
+        Args:
+            margin (int, optional): The contrastive loss margin. Defaults to 0.
+            top_k_violations (int, optional): The number of top k violations to consider when calculating the loss. Defaults to None.
+        """
         super().__init__()
         self.margin = margin
         self.top_k_violations = top_k_violations
 
     def forward(self, scores: torch.tensor) -> torch.tensor:
+        """
+        Calculates the loss as defined in VSE++
+
+        Args:
+            scores (torch.tensor): The similarity matrix between all images and captions in a batch
+
+        Returns:
+            torch.tensor: The loss.
+        """
         diagonal = scores.diag().view(scores.size(0), 1)
         d1 = diagonal.expand_as(scores)
         d2 = diagonal.t().expand_as(scores)
@@ -45,7 +62,17 @@ class ContrastiveLoss(nn.Module):
     
 
 class LxmertIRMatchingHead(nn.Module):
-    def __init__(self, config, num_labels):
+    """
+    The matching head that sits on top of the pooled [CLS] token.
+    """
+    def __init__(self, config: LxmertConfig, num_labels: int) -> None:
+        """
+        Initialize the matching head
+
+        Args:
+            config ([type]): [description]
+            num_labels (int): [description]
+        """
         super().__init__()
         hid_dim = config.hidden_size
         self.logit_fc = nn.Sequential(
@@ -55,12 +82,24 @@ class LxmertIRMatchingHead(nn.Module):
             nn.Linear(hid_dim * 2, num_labels),
         )
         
-    def forward(self, hidden_states):
+    def forward(self, hidden_states: torch.tensor) -> torch.tensor:
+        """
+        Forward of the matching head
+
+        Args:
+            hidden_states (torch.tensor): Hidden states of the [CLS] token.
+
+        Returns:
+            torch.tensor: Output tensor.
+        """
         return self.logit_fc(hidden_states)
 
 
 class LxmertForIRBCE(LxmertPreTrainedModel):
-    def __init__(self, config):
+    """
+    Binary classification formulation of text-image retrieval
+    """
+    def __init__(self, config: LxmertConfig) -> None:
         super().__init__(config)
         # Configuration
         self.config = config
@@ -89,7 +128,27 @@ class LxmertForIRBCE(LxmertPreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
-    ):
+    ) -> Union[Tuple, LxmertForIROutput]:
+        """
+        Model forward for binary classification formulation
+
+        Args:
+            input_ids (torch.LongTensor, optional): The input ids from the tokenizer. Defaults to None.
+            visual_feats (torch.tensor, optional): The pooled visual features from Faster R-CNN. Defaults to None.
+            visual_pos (torch.tensor, optional): Normalized bounding box features from Faster R-CNN. Defaults to None.
+            attention_mask (torch.tensor, optional): The attention mask from the tokenizer. Defaults to None.
+            token_type_ids (torch.tensor, optional): What type of tokens (i.e. first or second sentence) from tokenizer. Defaults to None.
+            visual_attention_mask (torch.tensor, optional): Custom visual attention mask. Defaults to None.
+            inputs_embeds (torch.tensor, optional): From the tokenizer. Defaults to None.
+            labels (torch.tensor, optional): Whether the paired image and text are a ground-truth pair. Defaults to None.
+            output_attentions (bool, optional): Whether to output the attentions. Defaults to None.
+            output_hidden_states (bool, optional): Whether to output the hidden states. Defaults to None.
+            return_dict (bool, optional): Whether to output a tuple or a dictionary. Defaults to None.
+
+        Returns:
+            Union[Tuple, LxmertForIROutput]: The output of the forward
+        """
+        
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         lxmert_output = self.lxmert(
@@ -127,7 +186,16 @@ class LxmertForIRBCE(LxmertPreTrainedModel):
         
 
 class LxmertForIRContrastive(LxmertPreTrainedModel):
-    def __init__(self, config):
+    """
+    Unfinished contrastive ranking version of LXMERT for text-image retrieval.
+    """
+    def __init__(self, config: LxmertForIRConfig) -> None:
+        """
+        Initialize a contrastive ranking LXMERT
+
+        Args:
+            config (LxmertForIRConfig): The configuration that additionally defines margin and top k violations.
+        """
         super().__init__(config)
         # Configuration
         self.config = config
@@ -154,7 +222,27 @@ class LxmertForIRContrastive(LxmertPreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
-    ):
+    ) -> Union[Tuple, LxmertForIROutput]:
+        """
+        Model forward for binary classification formulation
+
+        Args:
+            input_ids (torch.LongTensor, optional): The input ids from the tokenizer. Defaults to None.
+            visual_feats (torch.tensor, optional): The pooled visual features from Faster R-CNN. Defaults to None.
+            visual_pos (torch.tensor, optional): Normalized bounding box features from Faster R-CNN. Defaults to None.
+            attention_mask (torch.tensor, optional): The attention mask from the tokenizer. Defaults to None.
+            token_type_ids (torch.tensor, optional): What type of tokens (i.e. first or second sentence) from tokenizer. Defaults to None.
+            visual_attention_mask (torch.tensor, optional): Custom visual attention mask. Defaults to None.
+            inputs_embeds (torch.tensor, optional): From the tokenizer. Defaults to None.
+            labels (torch.tensor, optional): Whether the paired image and text are a ground-truth pair. Defaults to None.
+            output_attentions (bool, optional): Whether to output the attentions. Defaults to None.
+            output_hidden_states (bool, optional): Whether to output the hidden states. Defaults to None.
+            return_dict (bool, optional): Whether to output a tuple or a dictionary. Defaults to None.
+
+        Returns:
+            Union[Tuple, LxmertForIROutput]: The output of the forward
+        """
+        
         lxmert_output = self.lxmert(
             input_ids=input_ids,
             visual_feats=visual_feats,

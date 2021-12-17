@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Optional, Tuple
+from typing import Any, Optional, Tuple, Union
 
 import torch
 
@@ -62,7 +62,23 @@ class CLIPForIR(CLIPModel):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
-    ):
+    ) -> Union[Tuple, CLIPForIROutput]:
+        """
+        Modified CLIP forward function so that the diagonal of the logitsare the matching score in the batch and labels is defined.
+
+        Args:
+            input_ids (torch.LongTensor, optional): The input ids from the tokenizer. Defaults to None.
+            pixel_values (torch.tensor, optional): The pixel values from the CLIPProcessor. Defaults to None.
+            attention_mask (torch.tensor, optional): The attention mask from the tokenizer. Defaults to None.
+            position_ids (torch.tensor, optional): The position ids from the CLIPProcessor. Defaults to None.
+            labels (torch.tensor, optional): Serves as a dummy argument to indicate whether to return the loss. Defaults to None.
+            output_attentions (bool, optional): Whether to output the attention scores. Defaults to None.
+            output_hidden_states (bool, optional): Whether to output the hidden states. Defaults to None.
+            return_dict (bool, optional): Whether to a return a dict or tuple. Defaults to None.
+
+        Returns:
+            Union[Tuple, CLIPForIROutput]: Same output as CLIP with the addition of the matching score.
+        """
         return_loss = labels is not None
         return_dict = return_dict if return_dict is not None else self.config.return_dict
 

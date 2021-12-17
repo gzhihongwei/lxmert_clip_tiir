@@ -1,8 +1,10 @@
+"""
+Produces a JSON of the "easy" and "hard" questions for the models.
+"""
+
 import argparse
 import json
 import os
-
-from pathlib import Path
 
 import numpy as np
 
@@ -20,8 +22,9 @@ if __name__ == "__main__":
     parser.add_argument('--eval_img_keys_file', required=False, default="", type=str, help="Image key tsv to select a subset of images for evaluation.")
     parser.add_argument('--evaluation_output_file', required=True, type=str, help="Where the output of a model was stored")
     parser.add_argument('--img_idxs', required=False, nargs="+", help="List of image query indices to consider in caption retrieval")
-    parser.add_argument('--caption_idxs', required=False, nargs="+", help="List of caption query indices to consider in image retrieal")
+    parser.add_argument('--caption_idxs', required=False, nargs="+", help="List of caption query indices to consider in image retrieval")
     parser.add_argument('--output_file', required=False, default=None, type=str, help="Where to dump json")
+    parser.add_argument('--num_to_sample', required=False, default=40, type=int, help="Number of examples to sample")
     args = parser.parse_args()
     
     processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
@@ -63,20 +66,21 @@ if __name__ == "__main__":
         i2t_sorted_logits = (-i2t_logits).argsort(axis=1)[:, :10]
         ranked_captions = np.take(ground_truth_captions, i2t_sorted_logits)
 
-        hard_image_ids = img_ids[hard_image_inds].tolist()
+        # Ground truth captions and the retrieved captions for the hard image indices
         hard_ground_truth_captions = [[caption for caption in ground_truth_captions[5*i:(5*i)+5]] for i in hard_image_inds]
         hard_retrieved_captions = ranked_captions[hard_image_inds].tolist()
-        i2t_hard_queries = [{"query": img_id, "ground_truth": ground_truth, "retrieved": retrieved}
-                            for img_id, ground_truth, retrieved in zip(hard_image_ids, hard_ground_truth_captions, hard_retrieved_captions)]
+        i2t_hard_queries = [{"query": img_ind, "ground_truth": ground_truth, "retrieved": retrieved}
+                            for img_ind, ground_truth, retrieved in zip(hard_image_inds, hard_ground_truth_captions, hard_retrieved_captions)]
 
-        easy_image_ids = img_ids[easy_image_inds].tolist()
+        # Easy image ids, ground truth captions, and the retrieved captions
         easy_ground_truth_captions = [[caption for caption in ground_truth_captions[5*i:(5*i)+5]] for i in easy_image_inds]
         easy_retrieved_caption = ranked_captions[easy_image_inds][:, 0].tolist()
-        i2t_easy_queries = [{"query": img_idx, "ground_truth": ground_truth, "retrieved": retrieved}
-                            for img_idx, ground_truth, retrieved in zip(easy_image_ids, easy_ground_truth_captions, easy_retrieved_caption)]
+        i2t_easy_queries = [{"query": img_ind, "ground_truth": ground_truth, "retrieved": retrieved}
+                            for img_ind, ground_truth, retrieved in zip(easy_image_inds, easy_ground_truth_captions, easy_retrieved_caption)]
 
         results["i2t"] = {"hard": i2t_hard_queries, "easy": i2t_easy_queries}
     else:
+        # Only want to consider the retrievals for the given indices
         image_inds = list(map(int, args.img_idxs))
         # Get the indices in the form for the PyTorch dataset to get the ground_truth captions
         i2t_sorted_logits = (-i2t_logits).argsort(axis=1)[:, :10]
@@ -107,6 +111,7 @@ if __name__ == "__main__":
 
         ranked_images = (-t2i_logits).argsort(axis=1)[:, :10]
 
+        # Hard caption ids, ground truth image, and the retrieved image ids
         hard_query_captions = ground_truth_captions[hard_caption_inds].tolist()
         hard_ground_truth_images = ground_truth_images[hard_caption_inds].tolist()
         hard_retrieved_images = ranked_images[hard_caption_inds].tolist()
